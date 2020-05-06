@@ -1,14 +1,7 @@
 import time
 import numpy as np
 import tensorflow as tf
-from scipy.sparse import csr_matrix
-from models import GAT
-from models import SpGAT
-from gat_utils import process
-from data_process.dataset import GraphDataset, WhiteSpaceTokenizer,NewWhiteSpaceTokenizer
-from data_process.example import load_M10, load_cora, load_dblp
-from data_process.meta_network import MetaNetwork, N_TYPE_NODE, N_TYPE_LABEL, IdIndexer
-from transformer.model import transformer
+
 import google.protobuf.text_format as pbtf
 from tensorflow.core.framework import graph_pb2
 from sklearn.preprocessing import StandardScaler
@@ -23,11 +16,13 @@ import tge
 import json
 import pickle as pkl
 import multiprocessing as mp
-from multiprocessing import Pool
-from utils import adapt_batchsize
+
 from utils import group_around_topk_costs
 import logging
 import math
+import dgl
+from tf2gat import GAT
+
 def InitLog():
     log = logging.getLogger(__name__)
     log.setLevel(logging.DEBUG)
@@ -92,7 +87,6 @@ bsz =1
 
 
 nonlinearity = tf.nn.elu
-model = SpGAT
 is_transformer = True
 print('Dataset: ' + _dataset)
 print('----- Opt. hyperparams -----')
@@ -104,7 +98,6 @@ print('nb. units per layer: ' + str(hid_units))
 print('nb. attention heads: ' + str(n_heads))
 print('residual: ' + str(residual))
 print('nonlinearity: ' + str(nonlinearity))
-print('model: ' + str(model))
 feature_folders = config_dict.get("inputs",["data/graph1", "data/graph2", "data/graph3", "data/graph4", "data/graph5", "data/graph6","data/graph7","data/graph8"])
 sinks =  config_dict.get("sinks",[["GradientDescent"], ["GradientDescent"], ["GradientDescent"], ["GradientDescent"], ["GradientDescent"], ["GradientDescent"],["GradientDescent"],["GradientDescent"]])
 sample_times = 3
@@ -144,7 +137,7 @@ def post_process_device_choice(device_choice,batch_size):
     new_batch_size=np.ones(shape=(device_choice.shape[0],1)) * batch_size
     device_choice=np.array(list(map(post_func1,np.concatenate((device_choice,new_batch_size),axis=1))),dtype=np.int32)
 
-    replica_mask = np.zeros(shape=(device_choice.shape[0],device_choice.shape[1]*(max_replica_num+1)),dtype=np.int32)
+    replica_mask = np.zeros(shape=(device_choice.shape[0],device_choice.shape[1]*(max_replica_num+1)+2),dtype=np.int32)
     for i,item in enumerate(device_choice):
         for j,num in enumerate(item):
             replica_mask[i][j*(max_replica_num+1)+num]=1
@@ -152,10 +145,9 @@ def post_process_device_choice(device_choice,batch_size):
 
 
 class strategy_pool(object):
-    def __init__(self,folder_path,node_num,index_id_dict,env,batch_size,init_group,sink):
+    def __init__(self,folder_path,node_num,env,batch_size,init_group,sink):
         self.folder_path = folder_path
         self.node_num = node_num
-        self.index_id_dict = index_id_dict
         self.env = env
         self.sink = sink
         self.init_group = init_group
@@ -182,7 +174,7 @@ class strategy_pool(object):
 
             device_choice,replica_mask = post_process_device_choice(device_choice,self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num, ), dtype=np.int32)
-            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict,self.sink,group,record=True,record_name="full_nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
+            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink,group,record=True,record_name="full_nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
             if not out_of_memory:
                 self.insert(reward, device_choice, replica_mask,ps_or_reduce,group,force_insert=True)
 
@@ -194,7 +186,7 @@ class strategy_pool(object):
                 item[1]=2
             device_choice,replica_mask = post_process_device_choice(device_choice,self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num, ), dtype=np.int32)
-            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict,self.sink,group,record=True,record_name="partial_nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
+            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce,self.sink,group,record=True,record_name="partial_nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
             if not out_of_memory:
                 self.insert(reward, device_choice, replica_mask,ps_or_reduce,group,force_insert=True)
 
@@ -207,7 +199,7 @@ class strategy_pool(object):
 
             device_choice,replica_mask = post_process_device_choice(device_choice,self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num, ), dtype=np.int32)
-            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict,self.sink,group,record=True,record_name="nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
+            reward,out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce,self.sink,group,record=True,record_name="nccl_dp_graph.pbtxt",record_best=False,from_strategy_pool=True)
             if not out_of_memory:
                 self.insert(reward, device_choice, replica_mask,ps_or_reduce,group,force_insert=True)
 
@@ -218,7 +210,7 @@ class strategy_pool(object):
 
             device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
             ps_or_reduce = np.zeros(shape=(self.init_group_num,), dtype=np.int32)
-            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict, self.sink, group,
+            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink, group,
                                                          record=True, record_name="grpc_dp_graph.pbtxt", record_best=False,
                                                          from_strategy_pool=True)
             if not out_of_memory:
@@ -232,7 +224,7 @@ class strategy_pool(object):
 
             device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num,), dtype=np.int32)
-            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict, self.sink, group,
+            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink, group,
                                                          record=True, record_name="single_graph.pbtxt",
                                                          record_best=False, from_strategy_pool=True)
             if not out_of_memory:
@@ -245,7 +237,7 @@ class strategy_pool(object):
 
             device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num,), dtype=np.int32)
-            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict, self.sink, group,
+            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink, group,
                                                          record=True, record_name="model_parallel_graph.pbtxt",
                                                          record_best=False, from_strategy_pool=True)
             if not out_of_memory:
@@ -259,7 +251,7 @@ class strategy_pool(object):
 
             device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num,), dtype=np.int32)
-            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict, self.sink, group,
+            reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink, group,
                                                          record=True, record_name="model_parallel2_graph.pbtxt",
                                                          record_best=False, from_strategy_pool=True)
             if not out_of_memory:
@@ -410,7 +402,7 @@ class Environment(object):
 
 
 
-    def get_reward2(self,device_choice,ps_or_reduce,index_id_dict,sink,group,record=False,record_name=None,record_best=True,from_strategy_pool=False):
+    def get_reward2(self,device_choice,ps_or_reduce,sink,group,record=False,record_name=None,record_best=True,from_strategy_pool=False):
         out_of_memory=False
         #new_device_array = np.zeros(shape=(device_choice.shape[0],len(devices)),dtype=np.int32)
 
@@ -419,15 +411,13 @@ class Environment(object):
         no_sort_group = [group[index] for index in sorted(indexes)]
         group = [no_sort_group.index(item) for item in group]
         '''
-        group = group.tolist()
         new_device_array = device_choice
         ps_or_reduce = np.reshape(ps_or_reduce, (ps_or_reduce.shape[0], 1))
         new_device_array = np.concatenate((ps_or_reduce,new_device_array),axis=1)
         name_list = [nodedef.name for nodedef in self.null_gdef.node]
         print(new_device_array)
-        strategy = {index_id_dict[index]:new_device_array[group[self.init_group[index]]].tolist() for index in range(len(index_id_dict))}
+        strategy = {node.name:new_device_array[group[self.init_group[index]]].tolist() for index,node in enumerate(self.null_gdef.node)}
         strategy = {name: strategy.get(name, list(strategy.values())[0]) for name in name_list}
-
 
         _tge = tge.TGE(copy.deepcopy(self.null_gdef), self.devices,sink)
 
@@ -476,9 +466,8 @@ class Environment(object):
 
 class Graph_item():
     def __init__(self,folder_path,sink):
-        self.dataset = load_cora(folder_path,NewWhiteSpaceTokenizer())
-        adj = self.dataset.adj_matrix(sparse=True)
-        feature_matrix, feature_masks = self.dataset.feature_matrix(bag_of_words=False, sparse=False)
+        with open(folder_path+"/feature.json","r") as f:
+            feature_matrix = json.load(f)
 
         if "data/graph7" in folder_path:
             self.batch_size = 288*3
@@ -509,17 +498,31 @@ class Graph_item():
         self.ft_size = feature_matrix.shape[1]
         self.need_sample = False
 
-        self.biases = process.preprocess_adj_bias(adj)
-
-
-        self.index_id_dict = self.dataset.network.get_indexer(N_TYPE_NODE).index_id_dict
-        self.features = feature_matrix[np.newaxis]
+        self.features =  tf.convert_to_tensor(feature_matrix, dtype=tf.float32)
 
 
         self.gdef = graph_pb2.GraphDef()
         with open(folder_path+"/null_graph.pbtxt","r")as f:
             txt = f.read()
         pbtf.Parse(txt,self.gdef)
+
+        self.model_topo = dgl.DGLGraph()
+        self.model_topo.add_nodes(len(self.gdef.node))
+        reverse_dict = {node.name: i for i, node in enumerate(self.gdef.node)}
+        for i, node in enumerate(self.gdef.node):
+            for input in node.input:
+                if input[0] == '^':
+                    x = input[1:]
+                else:
+                    x = input.split(':')[0]
+                self.model_topo.add_edge(i, reverse_dict[x])
+                self.model_topo.add_edge(reverse_dict[x], i)
+        self.model_topo.add_edges(self.model_topo.nodes(), self.model_topo.nodes())  # self-loops are required for GAT
+
+
+
+
+
 
         #####process init group#####
         if os.path.exists(folder_path+"/init_group.json"):
@@ -544,7 +547,7 @@ class Graph_item():
         self.best_ps_or_reduce = list()
         self.folder_path = folder_path
         ##############create strategy pool#############################
-        self.strategy_pool = strategy_pool(folder_path,self.nb_nodes,self.index_id_dict,self.env,self.batch_size,self.init_group,self.sink)
+        self.strategy_pool = strategy_pool(folder_path,self.nb_nodes,self.env,self.batch_size,self.init_group,self.sink)
         self.best_group= self.strategy_pool.choose_strategy()["group"] if self.strategy_pool.choose_strategy()!=None else np.arange(max(self.init_group)+1)
         self.avg = None
         self.oom = []
@@ -579,8 +582,7 @@ class Graph_item():
         print(len(leaders))
         print(len(group))
         return group
-    def set_session_and_network(self,sess,place_gnn):
-        self.sess =sess
+    def set_network(self,place_gnn):
         self.place_gnn = place_gnn
 
 
@@ -605,9 +607,7 @@ class Graph_item():
 
         self.outputs = self.place_gnn.get_replica_num_prob(
             ftr_in=self.features,
-            bias_in=self.biases,
-            nb_nodes=self.nb_nodes,
-            mems=self.mems,
+            graph=self.model_topo,
             init_group = self.init_group)
 
     def parallel_process_output_unit(self,i):
@@ -617,7 +617,7 @@ class Graph_item():
         def random_choice(item):
             np.random.seed()
             choice = []
-            choice.append(np.random.choice(item.size, p=item))
+            choice.append(np.random.choice(item.size, p=np.exp(item)))
             choice.append(np.random.randint(0, item.size))
             return choice[np.random.choice(2, p=[sample_prob, 1 - sample_prob])]
 
@@ -625,7 +625,7 @@ class Graph_item():
             return np.array(list(map(sample_choice, output)))
 
         def sample_choice(item):
-            return np.random.choice(item.size, p=item)
+            return np.random.choice(item.size, p=np.exp(item))
 
         def argmax_func1(output):
             return np.array(list(map(argmax_choice, output)))
@@ -643,7 +643,7 @@ class Graph_item():
                 device_choice = np.array(list(map(sample_func1, self.outputs[0:len(devices)])))
             else:
                 device_choice = np.array(list(map(random_func1, self.outputs[0:len(devices)])))
-
+        print(device_choice.shape)
         device_choice = np.transpose(device_choice)  # from shape[device_num , group_num] to [group_num, device_num]
         device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
 
@@ -656,8 +656,12 @@ class Graph_item():
                 ps_or_reduce = np.array(list(map(random_choice, self.outputs[len(devices)])))
         # ps_or_reduce = self.outputs[max_replica_num]
         # group =  np.array(list(map(random_func1,self.outputs[-1])))
-        group = self.outputs[-1]
-        _reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.index_id_dict, self.sink, group)
+        
+        for k in range(ps_or_reduce.shape[0]):
+            replica_mask[k][ps_or_reduce[k]]=1
+        
+        
+        _reward, out_of_memory = self.env.get_reward2(device_choice, ps_or_reduce, self.sink, self.init_group)
         if not out_of_memory:
             self.oom[i]=(False)
         else:
@@ -666,7 +670,7 @@ class Graph_item():
         self.rewards[i]=(_reward)
         self.ps_or_reduces[i]=(ps_or_reduce)
         self.device_choices[i]=(device_choice)
-        self.group[i]=(group)
+        self.group[i]=(self.init_group)
         self.replica_masks[i]=(replica_mask)
 
     def parallel_process_output(self):
@@ -683,7 +687,7 @@ class Graph_item():
         for i in range(sample_times+1):
             if self.rewards[i] > self.best_reward:
                 self.best_reward = self.rewards[i]
-                self.best_replica_num = list()
+                self.best_replica_num = self.replica_masks[i]
                 self.best_device_choice = self.device_choices[i]
                 self.best_ps_or_reduce = self.ps_or_reduces[i]
                 self.best_group = self.group[i]
@@ -696,75 +700,35 @@ class Graph_item():
         print("[{}] Rewards = {}".format(self.folder_path, self.rewards))
         print("[{}] epoch = {}".format(self.folder_path, epoch))
         tmp_gradients = []
-        for index in range(sample_times):
-            #logger.debug("sample_ps:{}".format(self.ps_or_reduces[index]))
-            #logger.debug("sample_device_choices:{}".format(self.device_choices[index]))
 
-            place_loss,l2_loss,new_loss,new_global_mems,entropy,gradients=self.place_gnn.get_gradients(ftr_in=self.features,
-                            bias_in=self.biases,
-                            nb_nodes=self.nb_nodes,
-                            sample_ps_or_reduce = np.array(self.ps_or_reduces[index]),
-                            sample_device_choice = np.array(self.device_choices[index]),
-                            time_ratio = 0.1*self.avg/self.rewards[index],
-                            coef_entropy=self.co_entropy,
-                            mems = self.mems,
-                            init_group=self.init_group,
-                            place_lr = self.place_lr)
-            self.mems = new_global_mems
-            self.cal_entropy = entropy
-            print("place entropy:", self.cal_entropy)
-            print("coefficient:",self.co_entropy)
-            print("l2_loss:",l2_loss)
-            print("entropy loss:",-self.cal_entropy*self.co_entropy)
-            print("place loss:",place_loss)
-            print("place+entropy loss:",new_loss)
-            print("time ratio:",0.1*self.avg/self.rewards[index])
-            tmp_gradients.append(gradients)
+        results = [(mask,0.1*self.avg/reward) for mask,reward in zip(self.replica_masks,self.rewards)]
+        results.pop()
+
+        gradients=self.place_gnn.get_gradients(ftr_in=self.features,graph=self.model_topo,init_group=self.init_group,results=results)
+        tmp_gradients.append(gradients)
 
         times = max(self.rewards)*max(self.rewards)
-        self.record_time.append(str(times))
-        if len(self.record_time)>20:
-            self.record_time = self.record_time[-20:]
-        if len(self.record_time)==20 and len(set(self.record_time))<5:
-            self.co_entropy = self.large_co
-        else:
-            self.co_entropy = self.small_co
+
         if epoch % show_interval == 0:
             print("[{}] step = {}".format(self.folder_path,epoch))
             print("[{}] time = {}".format(self.folder_path,times))
             print("[{}] average reward = {}".format(self.folder_path,self.avg))
-            print("[{}] overall entropy:{}".format(self.folder_path,self.cal_entropy))
             with open(self.folder_path+"/time.log", "a+") as f:
                 f.write(str(times) + ",")
-            with open(self.folder_path+"/entropy.log", "a+") as f:
-                f.write(str(self.cal_entropy) + ",")
-            with open(self.folder_path+"/loss.log", "a+") as f:
-                f.write("place loss:{},entropy loss:{},place+entropy loss:{},l2_loss:{}\n".format(place_loss,-self.cal_entropy*self.co_entropy,new_loss,l2_loss))
+            #with open(self.folder_path+"/entropy.log", "a+") as f:
+             #   f.write(str(self.cal_entropy) + ",")
+            #with open(self.folder_path+"/loss.log", "a+") as f:
+             #   f.write("place loss:{},entropy loss:{},place+entropy loss:{},l2_loss:{}\n".format(place_loss,-self.cal_entropy*self.co_entropy,new_loss,l2_loss))
 
         if epoch % show_interval == 0:
             pool_strategy = self.strategy_pool.choose_strategy()
             if pool_strategy==None:
                 return self.compute_average_gradients(tmp_gradients)
+            results = [(pool_strategy["replica_mask"],0.1*self.avg/pool_strategy["reward"])]
 
-            place_loss, l2_loss,new_loss,new_global_mems,entropy,gradients=self.place_gnn.get_gradients(ftr_in=self.features,
-                            bias_in=self.biases,
-                            nb_nodes=self.nb_nodes,
-                            sample_ps_or_reduce = np.array(pool_strategy["ps_or_reduce"]),
-                            sample_device_choice = np.array(pool_strategy["device_choice"]),
-                            time_ratio = 0.1*self.avg/pool_strategy["reward"],
-                            coef_entropy=self.co_entropy,
-                            mems = self.mems,
-                            init_group=self.init_group,
-                            place_lr = self.place_lr
-                            )
-            self.mems = new_global_mems
-            self.cal_entropy = entropy
-            print("place entropy:", self.cal_entropy)
-            print("coefficient:",self.co_entropy)
-            print("l2_loss:",l2_loss)
-            print("entropy loss:",-self.cal_entropy*self.co_entropy)
-            print("place loss:",place_loss)
-            print("place+entropy loss:",new_loss)
+            gradients = self.place_gnn.get_gradients(ftr_in=self.features, graph=self.model_topo,
+                                                     init_group=self.init_group, results=results)
+
             print("time ratio:",0.1*self.avg/pool_strategy["reward"])
             tmp_gradients.append(gradients)
 
@@ -780,366 +744,84 @@ class Graph_item():
         for j in range(0, len(average_gradient)):
             average_gradient[j] = average_gradient[j] / len(tmp_gradients)
         return average_gradient
-    def train(self,epoch):
-
-        self.avg = np.mean(self.rewards) if self.avg==None else (self.avg+np.mean(self.rewards))/2
-        print("[{}] train_place = {}".format(self.folder_path, self.train_place))
-        print("[{}] Rewards = {}".format(self.folder_path, self.rewards))
-        print("[{}] epoch = {}".format(self.folder_path, epoch))
-
-        for index in range(sample_times):
-            #logger.debug("sample_ps:{}".format(self.ps_or_reduces[index]))
-            #logger.debug("sample_device_choices:{}".format(self.device_choices[index]))
-
-            place_loss,l2_loss,new_loss,new_global_mems,entropy=self.place_gnn.learn_place(ftr_in=self.features,
-                            bias_in=self.biases,
-                            nb_nodes=self.nb_nodes,
-                            sample_ps_or_reduce = np.array(self.ps_or_reduces[index]),
-                            sample_device_choice = np.array(self.device_choices[index]),
-                            time_ratio = 0.01*self.avg/self.rewards[index],
-                            coef_entropy=self.co_entropy,
-                            mems = self.mems,
-                            init_group=self.init_group,
-                            place_lr = self.place_lr)
-            self.mems = new_global_mems
-            self.cal_entropy = entropy
-            print("place entropy:", self.cal_entropy)
-            print("coefficient:",self.co_entropy)
-            print("l2_loss:",l2_loss)
-            print("entropy loss:",-self.cal_entropy*self.co_entropy)
-            print("place loss:",place_loss)
-            print("place+entropy loss:",new_loss)
-            print("time ratio:",0.01*self.avg/self.rewards[index])
-
-
-        times = max(self.rewards)*max(self.rewards)
-        self.record_time.append(str(times))
-        if len(self.record_time)>20:
-            self.record_time = self.record_time[-20:]
-        if len(self.record_time)==20 and len(set(self.record_time))<5:
-            self.co_entropy = self.large_co
-        else:
-            self.co_entropy = self.small_co
-        if epoch % show_interval == 0:
-            print("[{}] step = {}".format(self.folder_path,epoch))
-            print("[{}] time = {}".format(self.folder_path,times))
-            print("[{}] average reward = {}".format(self.folder_path,self.avg))
-            print("[{}] overall entropy:{}".format(self.folder_path,self.cal_entropy))
-            with open(self.folder_path+"/time.log", "a+") as f:
-                f.write(str(times) + ",")
-            with open(self.folder_path+"/entropy.log", "a+") as f:
-                f.write(str(self.cal_entropy) + ",")
-            with open(self.folder_path+"/loss.log", "a+") as f:
-                f.write("place loss:{},entropy loss:{},place+entropy loss:{},l2_loss:{}\n".format(place_loss,-self.cal_entropy*self.co_entropy,new_loss,l2_loss))
-
-        if epoch % show_interval == 0:
-            pool_strategy = self.strategy_pool.choose_strategy()
-            if pool_strategy==None:
-                return
-
-            place_loss, l2_loss,new_loss,new_global_mems,entropy=self.place_gnn.learn_place(ftr_in=self.features,
-                            bias_in=self.biases,
-                            nb_nodes=self.nb_nodes,
-                            sample_ps_or_reduce = np.array(pool_strategy["ps_or_reduce"]),
-                            sample_device_choice = np.array(pool_strategy["device_choice"]),
-                            time_ratio = 0.01*self.avg/pool_strategy["reward"],
-                            coef_entropy=self.co_entropy,
-                            mems = self.mems,
-                            init_group=self.init_group,
-                            place_lr = self.place_lr
-                            )
-            self.mems = new_global_mems
-            self.cal_entropy = entropy
-            print("place entropy:", self.cal_entropy)
-            print("coefficient:",self.co_entropy)
-            print("l2_loss:",l2_loss)
-            print("entropy loss:",-self.cal_entropy*self.co_entropy)
-            print("place loss:",place_loss)
-            print("place+entropy loss:",new_loss)
-            print("time ratio:",0.01*self.avg/pool_strategy["reward"])
 
 
 class new_place_GNN():
-    def __init__(self,sess,ft_size):
+    def __init__(self,ft_size):
         self.first_time = True
-        with tf.name_scope('place_gnn'):
-            self.sess = sess
 
-            self.ftr_in = tf.placeholder(dtype=tf.float32, shape=(batch_size, None, ft_size),name="ftr_in")
-            #self.bias_in = tf.placeholder(dtype=tf.float32, shape=(batch_size, None, None),name="bias_in")
-            self.bias_in = tf.sparse_placeholder(dtype=tf.float32)
-            self.nb_node = tf.placeholder(dtype=tf.int32, shape=(),name="nb_node")
-            self.attn_drop = tf.placeholder(dtype=tf.float32, shape=(),name="attn_drop")
-            self.ffd_drop = tf.placeholder(dtype=tf.float32, shape=(),name="ffd_drop")
-            self.is_train = tf.placeholder(dtype=tf.bool, shape=(),name="is_train")
-            self.init_group = tf.placeholder(dtype=tf.int32, shape=(None,),name="init_group")
-            self.sample_ps_or_reduce = tf.placeholder(dtype=tf.int32, shape=(None,),name="sample_ps_or_reduce")
-            self.sample_device_choice = tf.placeholder(dtype=tf.int32, shape=(None,len(devices),),name="sample_device_choice")
-            self.previous_device_choices = tf.placeholder(dtype=tf.float32, shape=(len(devices),None,max_replica_num+1),name="previous_device_choices")
-            self.time_ratio = tf.placeholder(dtype=tf.float32, shape=(),name="time_ratio")
-            self.coef_entropy = tf.placeholder(dtype=tf.float32, shape=(),name="coef_entropy")
+        self.gat = GAT(ft_size,len(devices),max_replica_num)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9,beta_2=0.98, epsilon=1e-9)
 
-            self.train_place = tf.placeholder(dtype=tf.bool, shape=(),name="train_place")
-            self.mems = [tf.placeholder(tf.float32,[128, bsz, d_model]) for _ in range(n_layer)]
-            self.place_lr = tf.placeholder(dtype=tf.float32, shape=(),name="place_lr")
-
-
-        with tf.variable_scope("group_nn"):
-            group = self.init_group
-            self.group = group
-            unique_group,_ =tf.unique(group)
-            self.unique_group = unique_group
-
-        with tf.variable_scope("place_nn"):
-            with tf.device("/device:GPU:1"):
-                logits = model.inference(self.ftr_in, 1024, self.nb_node, self.is_train,
-                                         self.attn_drop, self.ffd_drop,
-                                         bias_mat=self.bias_in,
-                                         hid_units=hid_units, n_heads=n_heads,
-                                         residual=residual, activation=nonlinearity)
-
-            with tf.device("/device:GPU:0"):
-                logits = model.inference(logits, d_model, self.nb_node, self.is_train,
-                                         self.attn_drop, self.ffd_drop,
-                                         bias_mat=self.bias_in,
-                                         hid_units=place_hid_units, n_heads=place_n_heads,
-                                         residual=residual, activation=nonlinearity)
-            logits = tf.reshape(logits, [-1, d_model])
-            self.logits_before = logits
-            logits = tf.unsorted_segment_max(logits, self.init_group, tf.reduce_max(self.init_group) + 1)
-            logits = tf.reshape(logits, [-1, d_model])
-
-            #logits=tf.unsorted_segment_sum(logits, group,tf.reduce_max(group)+1)
-            self.logits =logits
-            self.device_choices = list()
-            self.log_device_choices = list()
-            log_resh = tf.reshape(logits, [-1,bsz,d_model])
-            initializer = tf.initializers.random_normal(
-                stddev=0.02,
-                seed=None)
-            output,self.new_mems = transformer(log_resh,self.mems,n_layer,d_model,n_head,d_head,d_inner,0.1,0.1,initializer,True,mem_len=128)
-            output = tf.reshape(output, [-1,d_model])
-            output = tf.layers.dense(output,(max_replica_num+1)*(len(devices))+2)
-
-            sum = 0
-            for i in range(0,len(devices)):
-                oi = tf.nn.softmax(output[:,i*(max_replica_num+1):(i+1)*(max_replica_num+1)])
-                self.device_choices.append(oi)
-                #log_oi = tf.nn.log_softmax(output[:,i*(max_replica_num+1):(i+1)*(max_replica_num+1)])
-                log_oi = tf.log(oi+10e-8)
-                self.log_device_choices.append(log_oi)
-                sum = sum + tf.reduce_sum((log_oi* oi))
-            ps_or_reduce_prob = tf.nn.softmax(output[:,-2:])
-            self.ps_or_reduce = ps_or_reduce_prob
-            #self.log_ps_reduce = tf.nn.log_softmax(output[:,-2:])
-            self.log_ps_reduce = tf.log( self.ps_or_reduce+10e-8)
-            self.entropy = tf.reduce_sum((self.log_ps_reduce * ps_or_reduce_prob), 1)
-            self.entropy = -(tf.reduce_sum(self.entropy) + sum )
-
-            _range = tf.range(tf.shape(self.sample_ps_or_reduce)[0])[:, tf.newaxis]
-            kl = 0
-            KLDivergence = tf.keras.losses.KLDivergence()
-            for k in range(0,len(devices)):
-                kl+=KLDivergence(self.device_choices[i],self.previous_device_choices[i])
-            self.place_kl = kl
-
-            self.place_reward = []
-
-            indices = tf.concat((_range, self.sample_ps_or_reduce[:, tf.newaxis]), axis=1)
-            log_prob = tf.gather_nd(self.log_ps_reduce, indices)
-            #log_prob = tf.gather(log_prob,unique_group)
-            self.place_reward.append(tf.reduce_sum(log_prob )* self.time_ratio)
-
-
-            #rest device choice n*(m+1)
-            for j in range(0,len(devices)):
-                indices = tf.concat((_range, self.sample_device_choice[:, j][:, tf.newaxis]), axis=1)
-                log_prob = tf.gather_nd(self.log_device_choices[j], indices)
-                self.before_log_prob =self.log_device_choices[j]
-                self.indices = indices
-                self.log_prob = log_prob
-                self.place_reward.append(tf.reduce_sum(log_prob) * self.time_ratio)
-            self.place_reward = tf.add_n(self.place_reward)
-
-        place_reward =  self.place_reward+self.coef_entropy * self.entropy
-        #self.loss = -reward
-        self.place_loss = -place_reward
-        self.network_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='place_nn')
-
-        self.loss_l2 = tf.add_n([tf.nn.l2_loss(v) for v in self.network_params if v.name not in ['bias', 'gamma', 'b', 'g', 'beta']]) * l2_coef
-
-        self.net_gradients = tf.compat.v1.gradients(self.place_loss+self.loss_l2, self.network_params,colocate_gradients_with_ops=True)
-        self.apply_grad = tf.train.AdamOptimizer(learning_rate=self.place_lr).apply_gradients(zip(self.net_gradients,self.network_params))
-
-        #self.train_place_op,self.loss_l2 = model.training(self.place_loss,self.place_lr , l2_coef,vars=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='place_nn'))
-
-
-    def get_gradients(self,ftr_in,bias_in,nb_nodes,sample_ps_or_reduce,sample_device_choice,time_ratio,coef_entropy,mems,init_group,place_lr):
-        feed_dict = {}
-        feed_dict[self.ftr_in]=ftr_in
-        feed_dict[self.bias_in]=bias_in
-        feed_dict[self.nb_node]=nb_nodes
-        feed_dict[self.is_train]=True
-        feed_dict[self.attn_drop]=0.1
-        feed_dict[self.ffd_drop]=0.1
-        feed_dict[self.sample_ps_or_reduce]=sample_ps_or_reduce
-        feed_dict[self.sample_device_choice]=sample_device_choice
-        feed_dict[self.time_ratio]=time_ratio
-        feed_dict[self.coef_entropy]=coef_entropy
-        feed_dict[self.previous_device_choices]=self.previous_outputs[:len(devices)]
-        feed_dict[self.train_place] = True
-
-
-        feed_dict[self.place_lr]=place_lr
-
-        feed_dict[self.init_group]=init_group
-
-        for item1,item2 in zip(self.mems,mems):
-            feed_dict[item1]=item2
-
-        fetch_list =[item for item in self.device_choices]
-        fetch_list.extend([self.place_reward,self.loss_l2,self.before_log_prob,self.entropy,self.place_loss,self.new_mems,self.net_gradients])
-
-        outputs= self.sess.run(fetch_list,
-                     feed_dict=feed_dict)
-
-        place_reward,l2_loss,before_log_prob, entropy, loss, mems, gradients = outputs[len(devices):]
-        #logger.debug("previous_outputs:{}".format(self.previous_outputs[:len(devices)]))
-
-        return -place_reward,l2_loss,loss,mems,entropy,gradients
-
-    def apply_gradients(self,gradients,place_lr):
-        feed_dict = {i:d for i,d in zip(self.net_gradients,gradients)}
-        feed_dict[self.place_lr] = place_lr
-        _= self.sess.run(self.apply_grad,
-                     feed_dict=feed_dict)
-
-    def learn_place(self,ftr_in,bias_in,nb_nodes,sample_ps_or_reduce,sample_device_choice,time_ratio,coef_entropy,mems,init_group,place_lr):
-        feed_dict = {}
-        feed_dict[self.ftr_in]=ftr_in
-        feed_dict[self.bias_in]=bias_in
-        feed_dict[self.nb_node]=nb_nodes
-        feed_dict[self.is_train]=True
-        feed_dict[self.attn_drop]=0.1
-        feed_dict[self.ffd_drop]=0.1
-        feed_dict[self.sample_ps_or_reduce]=sample_ps_or_reduce
-        feed_dict[self.sample_device_choice]=sample_device_choice
-        feed_dict[self.time_ratio]=time_ratio
-        feed_dict[self.coef_entropy]=coef_entropy
-        feed_dict[self.previous_device_choices]=self.previous_outputs[:len(devices)]
-        feed_dict[self.train_place] = True
-
-
-        feed_dict[self.place_lr]=place_lr
-
-        feed_dict[self.init_group]=init_group
-
-        for item1,item2 in zip(self.mems,mems):
-            feed_dict[item1]=item2
-
-
-        fetch_list =[item for item in self.device_choices]
-        fetch_list.extend([self.place_reward,self.loss_l2,self.before_log_prob,self.entropy,self.unique_group,self.log_device_choices[0],self.log_prob,self.indices,self.place_loss,self.new_mems,self.train_place_op])
-
-        outputs= self.sess.run(fetch_list,
-                     feed_dict=feed_dict)
-        self.previous_outputs = outputs
-
-        place_reward,l2_loss,before_log_prob, entropy, unique, log_device_choices, log_prob, indices, loss, mems, _ = outputs[len(devices):]
-        #logger.debug("previous_outputs:{}".format(self.previous_outputs[:len(devices)]))
-
-        return -place_reward,l2_loss,loss,mems,entropy
-
-
-    def get_replica_num_prob(self,ftr_in,bias_in,nb_nodes,mems,init_group):
-        fetch_list =[item for item in self.device_choices]
-        fetch_list.append(self.ps_or_reduce)
-        fetch_list.append(self.logits_before)
-        fetch_list.append(self.logits)
-        fetch_list.append(self.group)
-
-
-
-        feed_dict = {}
-        feed_dict[self.ftr_in]=ftr_in
-        feed_dict[self.bias_in]=bias_in
-        feed_dict[self.nb_node]=nb_nodes
-        feed_dict[self.is_train]=False
-        feed_dict[self.attn_drop]=0
-        feed_dict[self.ffd_drop]=0
-        feed_dict[self.init_group] = init_group
-        for item1,item2 in zip(self.mems,mems):
-            feed_dict[item1]=item2
-
-        outputs = self.sess.run(fetch_list, feed_dict=feed_dict)
-        print("device choice prob:", outputs[0])
-        #print("Logits after:",outputs[-4])
-        #print("Group:",outputs[-3])
-        if self.first_time:
-            self.previous_outputs = outputs[:len(devices)]
-            self.first_time=False
+        try:
+            self.gat.load_weights('weights')
+            print("load saved weight")
+        except:
+            print("no saved weight")
+            pass
+    def get_gradients(self,ftr_in,graph,init_group,results):
+        self.gat.set_graphs(graph,init_group)
+        with tf.GradientTape() as tape:
+            tape.watch(self.gat.trainable_weights)
+            logp = self.gat(ftr_in, training=True)
+            reward = tf.add_n([reward_env * tf.reduce_sum(tf.boolean_mask(logp, mask)) for mask, reward_env in results])
+            loss = -reward
+            grads = tape.gradient(loss, self.gat.trainable_weights)
+            grads = [tf.clip_by_value(grad, -1., 1.) for grad in grads]
+        return grads
+    def apply_gradients(self,grads):
+        self.optimizer.apply_gradients(zip(grads, self.gat.trainable_weights))
+    def get_replica_num_prob(self,ftr_in,graph,init_group):
+        self.gat.set_graphs(graph, init_group)
+        x = self.gat(ftr_in, training=True)
+        x = x.numpy()
+        outputs = [x[:,i*(max_replica_num+1):(i+1)*(max_replica_num+1)] for i in range(len(devices))]
+        outputs.append(x[:,-2:])
         return outputs
-
 
 def main_entry():
     models = []
     for i,feature_folder in enumerate(feature_folders):
         item = Graph_item(feature_folder,sinks[i])
         models.append(item)
-    config = tf.ConfigProto(allow_soft_placement=True)
-    config.gpu_options.allow_growth = True
-    with tf.Session(config=config) as sess:
-        place_gnn = new_place_GNN(sess,ft_size=models[0].ft_size)
+    place_gnn = new_place_GNN(ft_size=models[0].ft_size)
 
-        saver = tf.train.Saver()
-        try:
-            saver.restore(sess, checkpt_file)
-        except:
-            init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
-            sess.run(init_op)
+    for model in models:
+        model.set_network(place_gnn)
 
+
+    for epoch in range(nb_epochs):
         for model in models:
-            model.set_session_and_network(sess,place_gnn)
+            model.sample(epoch)
 
+        processes=[]
+        for model in models:
+            processes.append(mp.Process(target=model.parallel_process_output))
+            #model.parallel_process_output()
+        for pro in processes:
+            pro.start()
+        for pro in processes:
+            pro.join()
 
-        for epoch in range(nb_epochs):
-            for model in models:
-                model.sample(epoch)
+        gradients = []
+        for model in models:
+            model.post_parallel_process()
+            #model.train(epoch)
+            gradients.append(model.compute_gradients(epoch))
 
+        for i, gradient in enumerate(gradients):
+            if i == 0:
+                average_gradient = gradient
+            else:
+                for j in range(0, len(gradient)):
+                    average_gradient[j] += gradient[j]
+        for j in range(0, len(average_gradient)):
+            average_gradient[j] = average_gradient[j] / len(gradients)
+        #print("Gradients:",average_gradient)
+        place_gnn.apply_gradients(average_gradient)
 
-            processes=[]
-            for model in models:
-                processes.append(mp.Process(target=model.parallel_process_output))
-                #model.parallel_process_output()
-            for pro in processes:
-                pro.start()
-            for pro in processes:
-                pro.join()
-
-            gradients = []
-            for model in models:
-                model.post_parallel_process()
-                #model.train(epoch)
-                gradients.append(model.compute_gradients(epoch))
-
-            for i, gradient in enumerate(gradients):
-                print(type(gradient), len(gradient))
-                print(type(gradient[0]), len(gradient[0]))
-
-                if i == 0:
-                    average_gradient = gradient
-                else:
-                    for j in range(0, len(gradient)):
-                        average_gradient[j] += gradient[j]
-            for j in range(0, len(average_gradient)):
-                average_gradient[j] = average_gradient[j] / len(gradients)
-            #print("Gradients:",average_gradient)
-            place_gnn.apply_gradients(average_gradient,lr)
-
-            if epoch % (show_interval*30 )== 0:
-                saver.save(sess, checkpt_file)
-
-        sess.close()
+        if epoch % (show_interval*30 )== 0:
+            place_gnn.gat.save_weights('weights')
 
 
 if __name__ == '__main__':

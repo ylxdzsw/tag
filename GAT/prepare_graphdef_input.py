@@ -237,7 +237,7 @@ def generate_feature_file(folder,index):
             profiler = Profiler(null_gdef,int(batch_size/replica_num[replica_times]),server.target)
             profilers.append(profiler)
         for i,nodedef in enumerate(null_gdef.node):
-            times = times_dict.get(nodedef.name,'')
+            times = times_dict.get(nodedef.name,[])
             if op_type_dict.get(nodedef.op,-1)==-1:
                 op_type_dict[nodedef.op] = len(op_type_dict.keys())
 
@@ -258,7 +258,7 @@ def generate_feature_file(folder,index):
                     final_dict[(nodedef.name,replica_num[replica_times])]=list()
                     item = final_dict[(nodedef.name,replica_num[replica_times])]
                 item.append(new_time)
-                times+=str(new_time)+" "
+                times.append(new_time)
             times_dict[nodedef.name] = times
     name_list = [nodedef.name for nodedef in null_gdef.node]
     for i, nodedef in enumerate(null_gdef.node):
@@ -282,14 +282,13 @@ def generate_feature_file(folder,index):
                     local_size*=dim.size
                 size+=local_size
         times = times_dict[nodedef.name]
-        item_list.append("{} {} {}{} {}".format(nodedef.name, op_type_dict[nodedef.op],times,size,batch_size))
+        item_list.append([op_type_dict[nodedef.op],*times,size,batch_size])
     for i,nodedef in enumerate(null_gdef.node):
         if nodedef.name not in name_list:
-            item_list.append("{} {} {}{} {}".format(nodedef.name, op_type_dict[nodedef.op], 0, 0, batch_size))
+            assert(0==1)
 
-    with open(folder+"docs.txt","w") as f:
-        item_list = ["\n"+item if i!=0 else item for i,item in enumerate(item_list)]
-        f.writelines(item_list)
+    with open(folder+"feature.json","w") as f:
+        json.dump(item_list,f)
     with open("op_type_dict.json", "w") as f:
         json.dump(op_type_dict,f)
     with open(folder+"cost.pkl", "wb") as f:
@@ -297,7 +296,7 @@ def generate_feature_file(folder,index):
 
 models = ["vgg19","resnet200","resnet50","resnet101","resnet152","inceptionv3","transformer","bert"]
 for i in range(len(models)):
-    if i!=7:
+    if i!=5:
         continue
     tf.reset_default_graph()
     folder = "data/graph"+str(i+1)+"/"

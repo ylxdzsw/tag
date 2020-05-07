@@ -54,11 +54,11 @@ class Environment(object):
         self.devices =devices
         self._tge = tge.TGE(self.gdef, devices)
         if "graph7" in null_gdef_path:
-            self.global_batch_size = 288*6
+            self.global_batch_size = 288*3
         elif "graph8" in null_gdef_path:
-            self.global_batch_size = 12 * 6
+            self.global_batch_size = 12 * 3
         else:
-            self.global_batch_size =  48*6
+            self.global_batch_size =  36*3
         with open("nccl_model.pkl","rb") as f:
             self.nccl_model=pkl.load(f)
 
@@ -80,9 +80,10 @@ class Environment(object):
         self.strategy_reward_dict[str(strategy)]=time
         return np.float32(time)
 
-    def get_null_reward(self,strategy,index_id_dict,trace="",record_name = None):
+    def get_null_reward(self,strategy,index_id_dict,trace="",record_name = None,direct=False):
         name_list = [nodedef.name for nodedef in self.null_gdef.node]
-        strategy = {index_id_dict[index]: strategy_int for index, strategy_int in enumerate(strategy)}
+        if not direct:
+            strategy = {index_id_dict[index]: strategy_int for index, strategy_int in enumerate(strategy)}
         strategy = {name: strategy.get(name, list(strategy.values())[0]) for name in name_list}
         bandwidth = config_dict.get("bandwidth",None)
         if bandwidth==None:
@@ -132,6 +133,13 @@ for _strategy in strategies:
     print("strategy:",_strategy)
     #print(env.get_reward(arr_strategy,index_id_dict,prefix+"/"+str(_strategy)+".json"))
     print(env.get_null_reward(arr_strategy,index_id_dict,prefix+"/"+str(_strategy)+"_null.json",str(_strategy)+".pbtxt"))
+
+
+with open(prefix+"/best_time.log","r") as f:
+    tmp = json.load(f)
+    strategy = tmp["strategy"]
+    print("best strategy:")
+    print(env.get_null_reward(strategy,index_id_dict,prefix+"/"+"best_strategy_null.json","best_strategy_null.pbtxt",direct=True))
 
 '''
 name_cost_dict = env.get_name_cost_dict()

@@ -54,11 +54,11 @@ class Environment(object):
         self.devices =devices
         self._tge = tge.TGE(self.gdef, devices)
         if "graph7" in null_gdef_path:
-            self.global_batch_size = 288*3
+            self.global_batch_size = 288*2
         elif "graph8" in null_gdef_path:
-            self.global_batch_size = 12 * 3
+            self.global_batch_size = 18
         else:
-            self.global_batch_size =  36*3
+            self.global_batch_size =  36*2
         with open("nccl_model.pkl","rb") as f:
             self.nccl_model=pkl.load(f)
 

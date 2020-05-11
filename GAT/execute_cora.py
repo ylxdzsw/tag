@@ -168,7 +168,8 @@ class strategy_pool(object):
 
         # even data parallel 1
         #device_choice = np.zeros(shape=(self.node_num, len(devices)), dtype=np.int32)
-        if False:
+        if True:
+            '''
             group = np.array(self.init_group)
             device_choice = np.ones(shape=(self.init_group_num, len(devices)), dtype=np.int32)*2
 
@@ -220,7 +221,7 @@ class strategy_pool(object):
 
 
             group = np.array(self.init_group)
-            device_choice = np.array([np.arange(len(devices))%1 for i in range(self.init_group_num)])
+            device_choice = np.zeros(shape=(self.init_group_num, len(devices)), dtype=np.int32)
 
             device_choice, replica_mask = post_process_device_choice(device_choice, self.batch_size)
             ps_or_reduce = np.ones(shape=(self.init_group_num,), dtype=np.int32)
@@ -231,7 +232,7 @@ class strategy_pool(object):
                 self.insert(reward, device_choice, replica_mask,ps_or_reduce,group,force_insert=True)
 
             group = np.array(self.init_group)
-            device_choice = np.array([np.arange(len(devices))%1 for i in range(self.init_group_num)])
+            device_choice = np.zeros(shape=(self.init_group_num, len(devices)), dtype=np.int32)
             for i,item in enumerate(device_choice):
                 item[i%len(devices)]=1
 
@@ -243,9 +244,9 @@ class strategy_pool(object):
             if not out_of_memory:
                 self.insert(reward, device_choice, replica_mask,ps_or_reduce,group,force_insert=True)
 
-
+            '''
             group = np.array(self.init_group)
-            device_choice = np.array([np.arange(len(devices))%1 for i in range(self.init_group_num)])
+            device_choice = np.zeros(shape=(self.init_group_num, len(devices)), dtype=np.int32)
             for i,item in enumerate(device_choice):
                 item[i//math.ceil(len(device_choice)/len(devices))]=1
 
@@ -416,12 +417,13 @@ class Environment(object):
         new_device_array = np.concatenate((ps_or_reduce,new_device_array),axis=1)
         name_list = [nodedef.name for nodedef in self.null_gdef.node]
         print(new_device_array)
-        strategy = {node.name:new_device_array[group[self.init_group[index]]].tolist() for index,node in enumerate(self.null_gdef.node)}
-        strategy = {name: strategy.get(name, list(strategy.values())[0]) for name in name_list}
-
+        strategy = {node.name:new_device_array[self.init_group[index]].tolist() for index,node in enumerate(self.null_gdef.node)}
         _tge = tge.TGE(copy.deepcopy(self.null_gdef), self.devices,sink)
+        if record_name:
+            time_mem_tuple = _tge.custom(strategy).fill_batchsize(self.batch_size).set_nccl_model(self.nccl_model).use_collective().set_bandwidth(self.intra,self.inter).evaluate(self.name_cost_dict,self.folder_path+"/"+record_name+".json")
+        else:
+            time_mem_tuple = _tge.custom(strategy).fill_batchsize(self.batch_size).set_nccl_model(self.nccl_model).use_collective().set_bandwidth(self.intra,self.inter).evaluate(self.name_cost_dict)
 
-        time_mem_tuple = _tge.custom(strategy).fill_batchsize(self.batch_size).set_nccl_model(self.nccl_model).use_collective().set_bandwidth(self.intra,self.inter).evaluate(self.name_cost_dict)
         time = time_mem_tuple[0]
         mem_list = time_mem_tuple[1]
         time = float(time)/(10**3)
@@ -470,11 +472,11 @@ class Graph_item():
             feature_matrix = json.load(f)
 
         if "data/graph7" in folder_path:
-            self.batch_size = 288*3
+            self.batch_size = 288*2
         elif "data/graph8" in folder_path:
-            self.batch_size = 12 * 3
+            self.batch_size = 18
         else:
-            self.batch_size = 36*3
+            self.batch_size = 36*2
 
         self.sink = sink
         if "graph1" in folder_path:

@@ -38,6 +38,9 @@ devices=config_dict.get("devices", [
 
 ])
 
+
+
+
 workers = config_dict.get("workers", ["10.28.1.26:3901","10.28.1.17:3901","10.28.1.16:3901"])
 
 def setup_workers(workers, protocol="grpc"):
@@ -203,7 +206,7 @@ def generate_feature_file(folder,index):
     if "data/graph7" in folder:
         batch_size = 288
     elif "data/graph8" in folder:
-        batch_size = 12
+        batch_size = 6
     else:
         batch_size=48
     final_dict=dict()
@@ -221,7 +224,7 @@ def generate_feature_file(folder,index):
     else:
         op_type_dict = dict()
     if "data/graph8" in folder:
-        replica_num = [1, 2, 3, 6, 12, 12, 12]
+        replica_num = [1, 2, 3, 6, 6, 6, 6]
     else:
         replica_num = [1, 2, 3, 4, 6, 8, 12]
     item_list=[]

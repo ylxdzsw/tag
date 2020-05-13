@@ -67,8 +67,6 @@ for name,strategy in best_strategy.items():
         continue
     # output_node_idx = i
     input_nodedef = null_gdef.node[input_node_idx]
-    if input_nodedef.op!="ApplyGradientDescent":
-        continue
     size = 0
     for output_shape in input_nodedef.attr["_output_shapes"].list.shape:
         local_size = 1

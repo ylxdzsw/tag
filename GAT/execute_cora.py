@@ -460,7 +460,8 @@ class Environment(object):
             record_graph_def = tge.TGE(copy.deepcopy(self.null_gdef), self.devices, self.sink).custom(strategy).replace_placeholder(self.batch_size).use_collective().compile().get_result()
             with open(self.folder_path+"/"+record_name, "w") as f:
                 f.write(pbtf.MessageToString(record_graph_def))
-
+            with open(self.folder_path+"/"+record_name+"_strategy.json","w") as f:
+                json.dump(strategy,f)
         return -np.float32(np.sqrt(time)),out_of_memory
 
     def get_name_cost_dict(self):
@@ -587,7 +588,7 @@ class Graph_item():
     def sample(self,epoch):
 
         global sample_prob
-        sample_prob = min(1+0.1*(epoch//60),1)
+        sample_prob = min(0.8+0.1*(epoch//60),0.8)
 
         print("[{}] sample_prob = {}".format(self.folder_path, sample_prob))
 
@@ -641,19 +642,15 @@ class Graph_item():
         else:
             np.random.seed()
             sample_or_not = True if np.random.choice(2, p=[sample_prob,1-sample_prob])==0 else False
-            if sample_or_not:
-                #device_choice = np.array(list(map(sample_func1, output)))
-                for j in range(device_choice.shape[0]):
-                    for k in range(device_choice.shape[1]):
-                        device_choice[j][k] = sample_choice(output[j][k])
-                print(self.folder_path, "sample_choice0:", time.time() - ti)
+            for j in range(device_choice.shape[0]):
+                for k in range(device_choice.shape[1]):
+                    device_choice[j][k] = sample_choice(output[j][k])
+            print(self.folder_path, "sample_choice0:", time.time() - ti)
 
-            else:
-                #device_choice = np.array(list(map(random_func1, output)))
-                #for j in range(device_choice.shape[0]):
-                #    for k in range(device_choice.shape[1]):
-                #        device_choice[j][k] = random_choice(output[j][k])
-                device_choice = np.random.randint(0, output[0].shape[1], size=device_choice.shape)
+            if not sample_or_not:
+                indices = np.random.randint(0, output[0].shape[0],size=(10,))
+                for j in range(device_choice.shape[0]):
+                        device_choice[j][indices] =  np.random.randint(0, output[0].shape[1], size=(10,))
                 print(self.folder_path, "random_choice0:", time.time() - ti)
 
         print(self.folder_path,device_choice.shape)
@@ -666,11 +663,11 @@ class Graph_item():
         if i == sample_times:
             ps_or_reduce = np.array(list(map(argmax_choice, self.outputs[len(devices)])))
         else:
-            if sample_or_not:
-                ps_or_reduce = np.array(list(map(sample_choice, self.outputs[len(devices)])))
-            else:
+            ps_or_reduce = np.array(list(map(sample_choice, self.outputs[len(devices)])))
+
+            if not sample_or_not:
                 #ps_or_reduce = np.array(list(map(random_choice, self.outputs[len(devices)])))
-                ps_or_reduce = np.random.randint(0, 2, size=(self.outputs[len(devices)].shape[0],))
+                ps_or_reduce[np.random.randint(0,ps_or_reduce.shape[0],size=(10,))] = np.random.randint(0, 2,size=(10,))
         # ps_or_reduce = self.outputs[max_replica_num]
         # group =  np.array(list(map(random_func1,self.outputs[-1])))
         group = np.array(self.init_group)

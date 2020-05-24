@@ -62,7 +62,7 @@ os.environ["TF_CONFIG"] = json.dumps(clus)
 
 
 
-
+sinks = ["GradientDescent"]
 
 setup_workers(workers, "grpc")
 
@@ -84,48 +84,42 @@ def model_fn(model_name,batch_size):
         y = tf.placeholder(tf.float32, shape=(batch_size,1000))
         output, _ = vgg.vgg_19(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="resnet200":
         from tensorflow.contrib.slim.nets import resnet_v2
         x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
         y = tf.placeholder(tf.float32, shape=(batch_size,1,1, 1000))
         output, _ = resnet_v2.resnet_v2_200(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="resnet101":
         from tensorflow.contrib.slim.nets import resnet_v2
         x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
         y = tf.placeholder(tf.float32, shape=(batch_size,1,1, 1000))
         output, _ = resnet_v2.resnet_v2_101(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="resnet152":
         from tensorflow.contrib.slim.nets import resnet_v2
         x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
         y = tf.placeholder(tf.float32, shape=(batch_size,1,1, 1000))
         output, _ = resnet_v2.resnet_v2_152(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="resnet50":
         from tensorflow.contrib.slim.nets import resnet_v2
         x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
         y = tf.placeholder(tf.float32, shape=(batch_size,1,1, 1000))
         output, _ = resnet_v2.resnet_v2_50(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="inceptionv3":
         from tensorflow.contrib.slim.nets import inception_v3
         x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
         y = tf.placeholder(tf.float32, shape=(batch_size, 1000))
         output, _ = inception_v3.inception_v3(x, 1000)
         loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=output)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
-        return optimizer
+
     elif model_name=="transformer":
         import modeltransformer.transformer as transf
         from modeltransformer.data import DatasetManager
@@ -146,8 +140,8 @@ def model_fn(model_name,batch_size):
             max_steps=300000,
         )
         transformer.build_model("wmt14", dm.source_id2word, dm.target_id2word, 0,**train_params)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(transformer._loss)
-        return optimizer
+        loss = transformer._loss
+
     elif model_name=="bert":
         from bert.runsquad import new_model_fn_builder
         import modeling
@@ -160,8 +154,25 @@ def model_fn(model_name,batch_size):
         features["start_positions"] = tf.cast(100*tf.placeholder(tf.float32,shape=(batch_size,)),tf.int32)
         features["end_positions"] =tf.cast(100*tf.placeholder(tf.float32,shape=(batch_size,)),tf.int32)
         loss = model(features)
-        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(loss)
+    elif model_name == "small":
+        slim = tf.contrib.slim
+        x = tf.placeholder(tf.float32, shape=(batch_size, 224, 224, 3))
+        y = tf.placeholder(tf.float32, shape=(batch_size, 1000))
+        v= tf.get_variable(name="large_variable",shape=(10000,224, 224, 3),trainable=True)
+        x = tf.slice(v,[0,0,0,0],tf.shape(x),name="large_slice")
+        net = slim.conv2d(x, 32, [5, 5],trainable=False)
+        net = slim.max_pool2d(net, [2, 2], 2)
+        net = slim.conv2d(net, 64, [5, 5],trainable=False)
+        net = slim.max_pool2d(net, [2, 2], 2)
+        net = slim.flatten(net)
+        net = slim.fully_connected(net, 1024, activation_fn=tf.nn.sigmoid,trainable=False)
+        net = slim.fully_connected(net, 1000, activation_fn=None,trainable=False)
+        loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=net)
+        optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(
+            tf.reduce_sum(loss))
         return optimizer
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.2,beta1=0.9,beta2=0.98, epsilon=1e-9).minimize(tf.reduce_sum(loss))
+    return optimizer
 
 def generate_edge_file(null_gdef,folder):
     with open(folder+"graph.pbtxt","w") as f:
@@ -234,7 +245,7 @@ def generate_feature_file(folder,index):
             #gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
         profilers = []
         for i in range(5):
-            profiler = Profiler(null_gdef,int(batch_size/replica_num[replica_times]),server.target)
+            profiler = Profiler(null_gdef,int(batch_size/replica_num[replica_times]),server.target,sinks = sinks)
             profilers.append(profiler)
         for i,nodedef in enumerate(null_gdef.node):
             times = times_dict.get(nodedef.name,'')
@@ -295,9 +306,9 @@ def generate_feature_file(folder,index):
     with open(folder+"cost.pkl", "wb") as f:
         pkl.dump(final_dict,f)
 
-models = ["vgg19","resnet200","resnet50","resnet101","resnet152","inceptionv3","transformer","bert"]
+models = ["vgg19","resnet200","resnet50","resnet101","resnet152","inceptionv3","transformer","bert","small"]
 for i in range(len(models)):
-    if i!=7:
+    if i!=8:
         continue
     tf.reset_default_graph()
     folder = "data/graph"+str(i+1)+"/"

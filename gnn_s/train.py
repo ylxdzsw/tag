@@ -5,6 +5,7 @@ import tensorflow as tf
 from data import get_all_data
 from model import Model
 from environment import sample, evaluate, sample_and_evaluate
+from search import search
 from utils import save, load, info
 
 try:
@@ -15,12 +16,10 @@ except:
     info("no saved records")
     save(records, "records")
 
-from search import search
+# with tf.device("/gpu:0"):
+#     search(records[15])
 
-with tf.device("/gpu:0"):
-    search(records[15])
-
-raise SystemExit
+# raise SystemExit
 
 with tf.device("/gpu:0"):
     model = Model(records[0]["op_table"])
@@ -31,12 +30,12 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00002, clipnorm=1)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
     L2_regularization_factor = 0 #.0005
 
     for epoch in range(20000):
         # record = records[np.random.randint(len(records))]
-        record = records[1]
+        record = records[5]
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)
         cefeats = tf.convert_to_tensor(record["cefeats"], dtype=tf.float32)
@@ -48,34 +47,28 @@ with tf.device("/gpu:0"):
 
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
-            loss = 0
-            for _ in range(10):
-                strategy = np.zeros((cnfeats.shape[0], tnfeats.shape[0]), dtype=np.bool)
-                for i in range(cnfeats.shape[0]):
-                    for j in range(tnfeats.shape[0]):
-                        if np.random.rand() > 0.5:
-                            strategy[i, j] = 1
+            nodelogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats], training=True)
+            score, nodemask = search(record, tf.math.sigmoid(nodelogit).numpy())
 
-                nodelogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats, strategy, None], training=True)
-                loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(strategy.astype(np.float32), nodelogit))
+            loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
 
-                # ncclmask, nodemask, advantage, sqrt_time, oom, leftout = sample_and_evaluate(record, nccllogit.numpy(), nodelogit.numpy()) # numpy to turn off gradient tracking
-                # for i in oom:
-                #     negative_logp = tf.nn.sigmoid_cross_entropy_with_logits([0.] * nodelogit.shape[1], nodelogit[i, :])
-                #     loss += .01 * tf.reduce_sum(negative_logp)
-                # for gi in leftout:
-                #     negative_logp = tf.nn.sigmoid_cross_entropy_with_logits([1.] * nodelogit.shape[0], nodelogit[:, gi])
-                #     loss += .01 * tf.reduce_sum(negative_logp)
-                # if len(oom) == 0: # and len(leftout) == 0:
-                #     negative_ncclunionlogp = tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit)
-                #     negative_nodeunionlogp = tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit)
-                #     loss += advantage * (tf.reduce_sum(negative_ncclunionlogp) + tf.reduce_sum(negative_nodeunionlogp))
-                #     info(advantage)
+            # ncclmask, nodemask, advantage, sqrt_time, oom, leftout = sample_and_evaluate(record, nccllogit.numpy(), nodelogit.numpy()) # numpy to turn off gradient tracking
+            # for i in oom:
+            #     negative_logp = tf.nn.sigmoid_cross_entropy_with_logits([0.] * nodelogit.shape[1], nodelogit[i, :])
+            #     loss += .01 * tf.reduce_sum(negative_logp)
+            # for gi in leftout:
+            #     negative_logp = tf.nn.sigmoid_cross_entropy_with_logits([1.] * nodelogit.shape[0], nodelogit[:, gi])
+            #     loss += .01 * tf.reduce_sum(negative_logp)
+            # if len(oom) == 0: # and len(leftout) == 0:
+            #     negative_ncclunionlogp = tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit)
+            #     negative_nodeunionlogp = tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit)
+            #     loss += advantage * (tf.reduce_sum(negative_ncclunionlogp) + tf.reduce_sum(negative_nodeunionlogp))
+            #     info(advantage)
 
-                # loss += (time_predict[0, 0] - time) * (time_predict[0, 0] - time)
-                # loss += tf.reduce_sum((memory_predict[:, 0] - memory) * (memory_predict[:, 0] - memory))
+            # loss += (time_predict[0, 0] - time) * (time_predict[0, 0] - time)
+            # loss += tf.reduce_sum((memory_predict[:, 0] - memory) * (memory_predict[:, 0] - memory))
 
-                # info(loss)
+            # info(loss)
 
             info(loss.numpy())
 

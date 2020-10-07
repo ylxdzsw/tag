@@ -4,7 +4,7 @@ import tensorflow as tf
 
 from data import get_all_data
 from model import Model
-from environment import sample, evaluate, sample_and_evaluate
+from environment import sample, evaluate, sample_and_evaluate, reference
 from search import search
 from utils import save, load, info
 
@@ -30,12 +30,16 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
-    L2_regularization_factor = 0 #.0005
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00001, clipnorm=6)
+    L2_regularization_factor = .0001
 
     for epoch in range(20000):
         # record = records[np.random.randint(len(records))]
-        record = records[5]
+        record = records[np.random.randint(7)]
+
+        if 'reference' not in record:
+            reference(record)
+            save(records, "records")
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)
         cefeats = tf.convert_to_tensor(record["cefeats"], dtype=tf.float32)
@@ -48,7 +52,17 @@ with tf.device("/gpu:0"):
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
             nodelogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats], training=True)
-            score, nodemask = search(record, tf.math.sigmoid(nodelogit).numpy())
+
+            if epoch < 5:
+                p = np.ones(nodelogit.shape, dtype=np.float) / 2
+            else:
+                p = tf.math.sigmoid(nodelogit).numpy()
+
+            loss_env, nodemask = search(record, p)
+
+            info(nodelogit)
+
+            info(nodemask)
 
             loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
 
@@ -70,7 +84,7 @@ with tf.device("/gpu:0"):
 
             # info(loss)
 
-            info(loss.numpy())
+            info(loss_env, record['reference'], loss.numpy())
 
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:

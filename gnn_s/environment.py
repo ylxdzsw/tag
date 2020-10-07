@@ -53,4 +53,18 @@ def f(arg):
     record, pheno = arg
     strategy = np.reshape(pheno, (len(record['cgroups']), len(record['devices'])))
     time, oom, leftout = evaluate(record, [1] * len(record['cgroups']), strategy)
-    return time * (1 + len(oom) + len(leftout))
+    nerror = len(oom) + len(leftout)
+    return time * (1 + 10 * nerror)
+
+def reference(record):
+    s = np.zeros((len(record['cgroups']), len(record['devices'])), dtype=np.float)
+    for i in range(len(record['cgroups'])):
+        s[i, 0] = 1
+    gpu0 = f((record, s))
+    for i in range(len(record['cgroups'])):
+        s[i, 1] = 1
+        s[i, 2] = 1
+        s[i, 3] = 1
+    f4 = f((record, s))
+    dp = f((record, np.ones((len(record['cgroups']), len(record['devices'])), dtype=np.float)))
+    record['reference'] = gpu0, f4, dp

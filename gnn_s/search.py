@@ -38,9 +38,9 @@ from pymoo.optimize import minimize
 from pymoo.model.sampling import Sampling
 
 class MySampling(Sampling):
-    def __init__(self, p):
+    def __init__(self, p, cap=0.02):
         super().__init__()
-        self.p = np.reshape(p, (-1,))
+        self.p = np.reshape(p, (-1,)) * (1 - cap) + 0.5 * cap
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.full((n_samples, problem.n_var), None, dtype=np.float)
@@ -64,7 +64,7 @@ def search(record, p):
         eliminate_duplicates=True)
         # eliminate_duplicates=MyElementwiseDuplicateElimination)
 
-    res = minimize(problem, algorithm, ("n_gen", 20), seed=1, verbose=False)
+    res = minimize(problem, algorithm, ("n_gen", 20), verbose=False)
     sol = np.reshape(res.opt.get("pheno")[0], (len(record['cgroups']), len(record['devices'])))
 
     # info("Best solution found: \nX = %s\nF = %s" % (res.X, res.F))

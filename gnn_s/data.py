@@ -182,7 +182,7 @@ def get_all_data():
         ("/job:worker/replica:0/task:0/device:GPU:3", 1.2, 3<<30),
         ("/job:worker/replica:0/task:1/device:GPU:0", 1, 3<<30),
         ("/job:worker/replica:0/task:1/device:GPU:1", 1, 3<<30),
-    ], intra=bandwidth, inter=100) for bandwidth in (4000, 40000)]
+    ], intra=bandwidth, inter=10) for bandwidth in (4000, 40000)]
     topos = topos1 + topos2 + topos3
     for i in range(len(topos)):
         topos[i]["id"] = i

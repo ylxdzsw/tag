@@ -74,56 +74,56 @@ class Model(tf.keras.Model):
         node_hidden = 32
         edge_hidden = 8
         op_embedding_len = 8
-        c_embedding_len = 64
-        t_embedding_len = 64
+        c_embedding_len = 32
+        t_embedding_len = 32
 
         self.op_embedding = tf.keras.layers.Embedding(len(op_table), op_embedding_len, input_length=1)
 
-        self.cntrans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.relu)
-        self.cetrans = tf.keras.layers.Dense(edge_hidden, activation=tf.nn.relu)
-        self.tntrans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.relu)
-        self.tetrans = tf.keras.layers.Dense(edge_hidden, activation=tf.nn.relu)
+        self.cntrans = tf.keras.layers.Dense(node_hidden, activation=tf.math.tanh)
+        self.cetrans = tf.keras.layers.Dense(edge_hidden, activation=tf.math.tanh)
+        self.tntrans = tf.keras.layers.Dense(node_hidden, activation=tf.math.tanh)
+        self.tetrans = tf.keras.layers.Dense(edge_hidden, activation=tf.math.tanh)
 
         self.c_gconv_layers = [
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu)
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh)
         ]
 
         self.c_corss_layers = [
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu)
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh)
         ]
 
         self.t_gconv_layers = [
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu),
-            GConv(node_hidden, tf.nn.relu)
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh),
+            GConv(node_hidden, tf.math.tanh)
         ]
 
         self.t_corss_layers = [
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu),
-            Cross(node_hidden, tf.nn.relu)
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh),
+            Cross(node_hidden, tf.math.tanh)
         ]
 
         self.c_final = tf.keras.layers.Dense(c_embedding_len, activation=None)
         self.t_final = tf.keras.layers.Dense(t_embedding_len, activation=None)
 
-        # self.final_strategy = tf.keras.layers.Dense(cgroups_len, activation=None)
+        self.final_strategy = tf.keras.layers.Dense(1, activation=None)
         # self.final_nccl = tf.keras.layers.Dense(1, activation=None)
 
     def set_graphs(self, cgraph, tgraph):
@@ -164,4 +164,10 @@ class Model(tf.keras.Model):
         if self.tgroups is not None:
             t_embedding = tf.concat([tf.expand_dims(tf.math.add_n([t_embedding[i, :] for i in group]), 0) for group in self.tgroups], 0)
 
-        return tf.matmul(c_embedding, t_embedding, transpose_b=True)
+        batches = []
+        for i in range(c_embedding.shape[0]):
+            x = tf.repeat(tf.reshape(c_embedding[i, :], (1, c_embedding.shape[1])), repeats=[t_embedding.shape[0]], axis=0)
+            x = tf.concat([x, t_embedding], 1)
+            batches.append(tf.expand_dims(x, 0))
+
+        return tf.squeeze(self.final_strategy(tf.concat(batches, 0)) / 100, axis=2)

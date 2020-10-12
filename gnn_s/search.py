@@ -12,7 +12,7 @@ pool = Pool(16)
 class MyProblem(Problem):
     def __init__(self, record):
         self.record = record
-        n = len(record['cgroups']) * len(record['devices'])
+        n = len(record['cgroups']) * len(record['devices']) + len(record['cgroups'])
         super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=1)
 
     def _evaluate(self, x, out, *args, **kwargs):
@@ -38,36 +38,40 @@ from pymoo.optimize import minimize
 from pymoo.model.sampling import Sampling
 
 class MySampling(Sampling):
-    def __init__(self, p, cap=0.02):
+    def __init__(self, nodep, ncclp, cap=0.02):
         super().__init__()
-        self.p = np.reshape(p, (-1,)) * (1 - cap) + 0.5 * cap
+        self.nodep = nodep * (1 - cap) + 0.5 * cap
+        self.ncclp = ncclp * (1 - cap) + 0.5 * cap
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.full((n_samples, problem.n_var), None, dtype=np.float)
 
         for i in range(n_samples):
-            X[i, :] = np.random.rand(problem.n_var) < self.p
+            node = np.random.rand(len(self.nodep)) < self.nodep
+            nccl = np.random.rand(len(self.ncclp)) < self.ncclp
+            X[i, :] = np.hstack([node, nccl])
 
         # X = np.random.rand(n_samples, problem.n_var)
 
         return X
 
-def search(record, p):
+def search(record, nodep, ncclp, n_gen=20):
     problem = MyProblem(record)
 
     algorithm = BRKGA(
-        n_elites=16,
-        n_offsprings=48,
-        n_mutants=16,
+        n_elites=64,
+        n_offsprings=32,
+        n_mutants=32,
         bias=0.7,
-        sampling=MySampling(p),
+        sampling=MySampling(nodep, ncclp),
         eliminate_duplicates=True)
         # eliminate_duplicates=MyElementwiseDuplicateElimination)
 
-    res = minimize(problem, algorithm, ("n_gen", 20), verbose=False)
-    sol = np.reshape(res.opt.get("pheno")[0], (len(record['cgroups']), len(record['devices'])))
+    res = minimize(problem, algorithm, ("n_gen", n_gen), verbose=False)
+    nodemask = res.opt.get("pheno")[0][:len(record['cgroups']) * len(record['devices'])]
+    ncclmask = res.opt.get("pheno")[0][len(record['cgroups']) * len(record['devices']):]
 
     # info("Best solution found: \nX = %s\nF = %s" % (res.X, res.F))
     # info("Solution", sol)
 
-    return res.F[0], sol
+    return res.F[0], nodemask, ncclmask

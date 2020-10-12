@@ -124,7 +124,7 @@ class Model(tf.keras.Model):
         self.t_final = tf.keras.layers.Dense(t_embedding_len, activation=None)
 
         self.final_strategy = tf.keras.layers.Dense(1, activation=None)
-        # self.final_nccl = tf.keras.layers.Dense(1, activation=None)
+        self.final_nccl = tf.keras.layers.Dense(1, activation=None)
 
     def set_graphs(self, cgraph, tgraph):
         self.cgraph = cgraph
@@ -168,6 +168,6 @@ class Model(tf.keras.Model):
         for i in range(c_embedding.shape[0]):
             x = tf.repeat(tf.reshape(c_embedding[i, :], (1, c_embedding.shape[1])), repeats=[t_embedding.shape[0]], axis=0)
             x = tf.concat([x, t_embedding], 1)
-            batches.append(tf.expand_dims(x, 0))
+            batches.append(x)
 
-        return tf.squeeze(self.final_strategy(tf.concat(batches, 0)) / 100, axis=2)
+        return tf.squeeze(self.final_strategy(tf.concat(batches, 0)) / 100, axis=1), tf.squeeze(self.final_nccl(c_embedding) / 100, axis=1)

@@ -29,7 +29,7 @@ with tf.device("/gpu:0"):
     L2_regularization_factor = .0001
 
     for epoch in range(20000):
-        record_id = np.random.randint(len(records))
+        record_id = np.random.randint(21, len(records))
         record = records[record_id]
 
         if 'reference' not in record:
@@ -39,7 +39,7 @@ with tf.device("/gpu:0"):
         if 'elites' not in record:
             nodep = np.ones(len(record['cgroups']) * len(record['devices']), dtype=np.float) / 2
             ncclp = np.ones(len(record['cgroups']), dtype=np.float) / 2
-            record['elites'] = [search(record, nodep, ncclp, n_gen=75)]
+            record['elites'] = [search(record, nodep, ncclp)]
             save(records, "records")
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)

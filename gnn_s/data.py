@@ -96,7 +96,7 @@ def gen_data(gdef, prof_data, topo, op_table):
     def group_with_layer_name():
         group_table = {}
         for i, node in enumerate(gdef.node):
-            if node.name.startswith("GradientDescent") or node.name.startswith("gradients"):
+            if node.name.startswith("Adam") or node.name.startswith("gradients"):
                 prefix = '/'.join(node.name.split('/')[1:3])
             else:
                 prefix = '/'.join(node.name.split('/')[:2])
@@ -107,18 +107,18 @@ def gen_data(gdef, prof_data, topo, op_table):
         return list(group_table.values())
 
     def group_with_k_spanning_tree():
-        seed = [i for i, node in enumerate(gdef.node) if node.name == 'GradientDescent'][0]
+        seed = [i for i, node in enumerate(gdef.node) if node.name == 'Adam'][0]
         return k_spanning_tree(g, [x[1] for x in efeats], 20, seed)
 
-    def group_with_topk_nodes():
+    def group_with_topk_nodes(k):
         from utils import group_around_topk_costs
         from tge import TGE
 
         base_groups = TGE(gdef, [dev for dev, _, _ in topo["devices"]]).get_groups()
-        id_list = group_around_topk_costs(gdef, base_groups, prof_data, 4)
+        id_list = group_around_topk_costs(gdef, base_groups, prof_data, k-1)
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
-    cgroups = group_with_topk_nodes()
+    cgroups = group_with_topk_nodes(len(topo["devices"]))
 
     # for group in cgroups:
     #     for g in group:
@@ -156,32 +156,32 @@ def gen_data(gdef, prof_data, topo, op_table):
     }
 
 def get_all_data():
-    models = [pickle.load(open("{}.pickle".format(m), "rb")) for m in ("vgg", "resnet", "inception", )] #  , "mlp", "lenet"
+    models = [pickle.load(open("{}.pickle".format(m), "rb")) for m in ("vgg", "resnet", "inception", "transformer")]
     topos1 = [gen_topo([
-        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:2", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:3", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:4", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:5", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:6", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:7", 2, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:2", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:3", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:4", 2, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:5", 2, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:6", 2, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:7", 2, 6<<30),
     ], intra=bandwidth) for bandwidth in (4000, 40000)]
     topos2 = [gen_topo([
-        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:2", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:3", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:4", 3, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:5", 3, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:2", 2, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:3", 2, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:4", 3, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:5", 3, 6<<30),
     ], intra=bandwidth) for bandwidth in (800, 8000, 80000)]
     topos3 = [gen_topo([
-        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:2", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:3", 1, 3<<30),
-        ("/job:worker/replica:0/task:1/device:GPU:0", 1, 3<<30),
-        ("/job:worker/replica:0/task:1/device:GPU:1", 1, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:2", 1, 6<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:3", 1, 6<<30),
+        ("/job:worker/replica:0/task:1/device:GPU:0", 1, 6<<30),
+        ("/job:worker/replica:0/task:1/device:GPU:1", 1, 6<<30),
     ], intra=bandwidth, inter=100) for bandwidth in (8000, 80000)]
     topos = topos1 + topos2 + topos3
     for i in range(len(topos)):

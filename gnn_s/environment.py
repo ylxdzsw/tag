@@ -21,10 +21,10 @@ def evaluate(record, ncclmask, nodemask):
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
             v[1] = 1
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]])
+    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=["Adam"])
     tge.set_strategy(strategy)
-    tge.fill_batchsize(120)
-    tge.replace_placeholder(120)
+    tge.fill_batchsize(240)
+    tge.replace_placeholder(240)
     tge.set_bandwidth(intra=int(record["intra"]), inter=int(record["inter"]))
     tge.set_nccl_model(record["nccl_models"])
     time, mem = tge.evaluate(record["prof_data"])

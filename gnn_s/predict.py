@@ -25,6 +25,8 @@ with tf.device("/gpu:1"):
 
     #     info(bestloss, record['reference'])
 
+    # raise SystemExit()
+
     record = records[-6]
     bestloss, bestnode, bestnccl = record['elites'][0]
     for loss, node, nccl in record['elites']:

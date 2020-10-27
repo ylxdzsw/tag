@@ -25,7 +25,7 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00001, clipnorm=6)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00005, clipnorm=6)
     L2_regularization_factor = .0001
 
     for epoch in range(20000):
@@ -39,7 +39,7 @@ with tf.device("/gpu:0"):
         if 'elites' not in record:
             nodep = np.ones(len(record['cgroups']) * len(record['devices']), dtype=np.float) / 2
             ncclp = np.ones(len(record['cgroups']), dtype=np.float) / 2
-            record['elites'] = [search(record, nodep, ncclp, n_gen=50)]
+            record['elites'] = [search(record, nodep, ncclp, n_gen=75)]
             save(records, "records")
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)

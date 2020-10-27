@@ -50,6 +50,20 @@ def inception():
     optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
     return optimizer
 
+def transformer():
+    from transformer.model import transformer
+    x = tf.placeholder(dtype=tf.int32, shape=(None, 1))
+    y = tf.placeholder(dtype=tf.int32, shape=(None, 1))
+
+    loss, _ = transformer(
+        x, y, mems=None, n_token=1, n_layer=12, d_model=512, d_embed=256, n_head=8, d_head=64, d_inner=2048,
+        dropout=0.1, dropatt=0.1, initializer=tf.initializers.random_normal(stddev=0.02, seed=None),
+        is_training=True, mem_len=128
+    )
+
+    optimizer = tf.train.GradientDescentOptimizer(0.2).minimize(tf.reduce_sum(loss))
+    return optimizer
+
 import tensorflow as tf
 import pickle
 from profiler import Profiler

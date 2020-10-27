@@ -17,7 +17,7 @@ class MyProblem(Problem):
 
     def _evaluate(self, x, out, *args, **kwargs):
         # pheno = (2.9999 * x).astype(int)
-        pheno = x.astype(int)
+        pheno = (x > .5).astype(int)
 
         ks = pool.map(f, [(self.record, pheno[i, :]) for i in range(pheno.shape[0])])
 
@@ -55,7 +55,7 @@ class MySampling(Sampling):
 
         return X
 
-def search(record, nodep, ncclp, n_gen=20):
+def search(record, nodep, ncclp, n_gen=30):
     problem = MyProblem(record)
 
     algorithm = BRKGA(

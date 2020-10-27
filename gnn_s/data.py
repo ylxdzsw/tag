@@ -115,7 +115,7 @@ def gen_data(gdef, prof_data, topo, op_table):
         from tge import TGE
 
         base_groups = TGE(gdef, [dev for dev, _, _ in topo["devices"]]).get_groups()
-        id_list = group_around_topk_costs(gdef, base_groups, prof_data, 19)
+        id_list = group_around_topk_costs(gdef, base_groups, prof_data, 4)
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
     cgroups = group_with_topk_nodes()
@@ -166,23 +166,23 @@ def get_all_data():
         ("/job:worker/replica:0/task:0/device:GPU:5", 2, 3<<30),
         ("/job:worker/replica:0/task:0/device:GPU:6", 2, 3<<30),
         ("/job:worker/replica:0/task:0/device:GPU:7", 2, 3<<30),
-    ], intra=bandwidth) for bandwidth in (1000, 10000)]
+    ], intra=bandwidth) for bandwidth in (4000, 40000)]
     topos2 = [gen_topo([
         ("/job:worker/replica:0/task:0/device:GPU:0", 1, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:1", 1.5, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 3<<30),
         ("/job:worker/replica:0/task:0/device:GPU:2", 2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:3", 2.5, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:3", 2, 3<<30),
         ("/job:worker/replica:0/task:0/device:GPU:4", 3, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:5", 3.5, 3<<30),
-    ], intra=bandwidth) for bandwidth in (400, 4000, 40000)]
+        ("/job:worker/replica:0/task:0/device:GPU:5", 3, 3<<30),
+    ], intra=bandwidth) for bandwidth in (800, 8000, 80000)]
     topos3 = [gen_topo([
-        ("/job:worker/replica:0/task:0/device:GPU:0", 1.2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:1", 1.2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:2", 1.2, 3<<30),
-        ("/job:worker/replica:0/task:0/device:GPU:3", 1.2, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:0", 1, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", 1, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:2", 1, 3<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:3", 1, 3<<30),
         ("/job:worker/replica:0/task:1/device:GPU:0", 1, 3<<30),
         ("/job:worker/replica:0/task:1/device:GPU:1", 1, 3<<30),
-    ], intra=bandwidth, inter=10) for bandwidth in (4000, 40000)]
+    ], intra=bandwidth, inter=100) for bandwidth in (8000, 80000)]
     topos = topos1 + topos2 + topos3
     for i in range(len(topos)):
         topos[i]["id"] = i

@@ -1,7 +1,7 @@
 import tensorflow as tf
 import dgl.function as fn
 import numpy as np
-from utils import info
+from utils import info, positional_encoding
 
 class GConv(tf.keras.layers.Layer):
     '''Graph Conv layer that concats the edge features before sending message'''
@@ -123,7 +123,7 @@ class Model(tf.keras.Model):
         self.c_final = tf.keras.layers.Dense(c_embedding_len, activation=None)
         self.t_final = tf.keras.layers.Dense(t_embedding_len, activation=None)
 
-        self.final_strategy = tf.keras.layers.Dense(1, activation=None)
+        self.final_strategy = tf.keras.layers.Dense(3, activation=None)
         self.final_nccl = tf.keras.layers.Dense(1, activation=None)
 
     def set_graphs(self, cgraph, tgraph):
@@ -145,6 +145,9 @@ class Model(tf.keras.Model):
         t_embedding = self.tntrans(tfeats)
         tedge_feats = self.tetrans(tedge_feats)
 
+        c_embedding += positional_encoding(*c_embedding.shape)
+        t_embedding += positional_encoding(*t_embedding.shape)
+
         for i in range(len(self.c_gconv_layers)):
             c_embedding = self.c_gconv_layers[i](self.cgraph, c_embedding, cedge_feats)
             t_embedding = self.t_gconv_layers[i](self.tgraph, t_embedding, tedge_feats)
@@ -159,10 +162,10 @@ class Model(tf.keras.Model):
         t_embedding = self.t_final(t_embedding)
 
         if self.cgroups is not None:
-            c_embedding = tf.concat([tf.expand_dims(tf.math.add_n([c_embedding[i, :] for i in group]), 0) for group in self.cgroups], 0)
+            c_embedding = tf.concat([tf.expand_dims(tf.math.add_n([c_embedding[i, :] for i in group]) / len(group), 0) for group in self.cgroups], 0)
 
         if self.tgroups is not None:
-            t_embedding = tf.concat([tf.expand_dims(tf.math.add_n([t_embedding[i, :] for i in group]), 0) for group in self.tgroups], 0)
+            t_embedding = tf.concat([tf.expand_dims(tf.math.add_n([t_embedding[i, :] for i in group]) / len(group), 0) for group in self.tgroups], 0)
 
         batches = []
         for i in range(c_embedding.shape[0]):
@@ -170,4 +173,4 @@ class Model(tf.keras.Model):
             x = tf.concat([x, t_embedding], 1)
             batches.append(x)
 
-        return tf.squeeze(self.final_strategy(tf.concat(batches, 0)) / 100, axis=1), tf.squeeze(self.final_nccl(c_embedding) / 100, axis=1)
+        return self.final_strategy(tf.concat(batches, 0)) / 20, tf.squeeze(self.final_nccl(c_embedding) / 20, axis=1)

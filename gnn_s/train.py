@@ -25,11 +25,11 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00005, clipnorm=6)
-    L2_regularization_factor = .0001
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
+    L2_regularization_factor = .00001
 
     for epoch in range(20000):
-        record_id = np.random.randint(21, len(records))
+        record_id = np.random.randint(len(records))
         record = records[record_id]
 
         if 'reference' not in record:
@@ -37,9 +37,9 @@ with tf.device("/gpu:0"):
             save(records, "records")
 
         if 'elites' not in record:
-            nodep = np.ones(len(record['cgroups']) * len(record['devices']), dtype=np.float) / 2
+            nodep = np.ones((len(record['cgroups']) * len(record['devices']), 3), dtype=np.float) / 3
             ncclp = np.ones(len(record['cgroups']), dtype=np.float) / 2
-            record['elites'] = [search(record, nodep, ncclp)]
+            record['elites'] = [search(record, nodep, ncclp, n_gen=25)]
             save(records, "records")
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)
@@ -53,7 +53,7 @@ with tf.device("/gpu:0"):
         # search
         if epoch % 10 == 0:
             nodelogit, nccllogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats], training=False)
-            nodep = tf.math.sigmoid(nodelogit).numpy()
+            nodep = tf.nn.softmax(nodelogit).numpy()
             ncclp = tf.math.sigmoid(nccllogit).numpy()
             loss_env, nodemask, ncclmask = search(record, nodep, ncclp)
             record['elites'].append((loss_env, nodemask, ncclmask))
@@ -66,14 +66,20 @@ with tf.device("/gpu:0"):
             tape.watch(model.trainable_weights)
             nodelogit, nccllogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats], training=True)
 
+            # info(tf.nn.softmax(nodelogit).numpy())
+            # info(nodelogit.numpy())
+
             loss = 0
             for loss_env, nodemask, ncclmask in record['elites']:
-                loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
+                nodemask = tf.one_hot(nodemask, depth=3).numpy()
+                loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
                 loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit))
 
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:
                     loss += L2_regularization_factor * tf.nn.l2_loss(weight)
+
+            info(loss.numpy())
 
             grads = tape.gradient(loss, model.trainable_weights)
             # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])

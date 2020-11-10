@@ -106,9 +106,9 @@ def gen_data(gdef, prof_data, topo, op_table):
                 group_table[prefix] = [i]
         return list(group_table.values())
 
-    def group_with_k_spanning_tree():
+    def group_with_k_spanning_tree(k):
         seed = [i for i, node in enumerate(gdef.node) if node.name == 'Adam'][0]
-        return k_spanning_tree(g, [x[1] for x in efeats], 20, seed)
+        return k_spanning_tree(g, [x[1] for x in efeats], k, seed)
 
     def group_with_topk_nodes(k):
         from utils import group_around_topk_costs
@@ -118,7 +118,7 @@ def gen_data(gdef, prof_data, topo, op_table):
         id_list = group_around_topk_costs(gdef, base_groups, prof_data, k-1)
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
-    cgroups = group_with_topk_nodes(len(topo["devices"]))
+    cgroups = group_with_topk_nodes(2 * len(topo["devices"]))
 
     # for group in cgroups:
     #     for g in group:

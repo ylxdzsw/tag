@@ -13,11 +13,10 @@ class MyProblem(Problem):
     def __init__(self, record):
         self.record = record
         n = len(record['cgroups']) * len(record['devices']) + len(record['cgroups'])
-        super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=1)
+        super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=[3]*(len(record['cgroups']) * len(record['devices'])) + [2]*len(record['cgroups']))
 
     def _evaluate(self, x, out, *args, **kwargs):
-        # pheno = (2.9999 * x).astype(int)
-        pheno = (x > .5).astype(int)
+        pheno = x.astype(int)
 
         ks = pool.map(f, [(self.record, pheno[i, :]) for i in range(pheno.shape[0])])
 
@@ -40,28 +39,28 @@ from pymoo.model.sampling import Sampling
 class MySampling(Sampling):
     def __init__(self, nodep, ncclp, cap=0.02):
         super().__init__()
-        self.nodep = nodep * (1 - cap) + 0.5 * cap
+        self.nodep = nodep * (1 - cap) + 1/3 * cap
         self.ncclp = ncclp * (1 - cap) + 0.5 * cap
 
     def _do(self, problem, n_samples, **kwargs):
         X = np.full((n_samples, problem.n_var), None, dtype=np.float)
 
         for i in range(n_samples):
-            node = np.random.rand(len(self.nodep)) < self.nodep
-            nccl = np.random.rand(len(self.ncclp)) < self.ncclp
+            node = np.array([np.random.choice(3, p=self.nodep[j, :]) / 2 * 2.999999 for j in range(self.nodep.shape[0])])
+            nccl = (np.random.rand(len(self.ncclp)) < self.ncclp) * 2
             X[i, :] = np.hstack([node, nccl])
 
         # X = np.random.rand(n_samples, problem.n_var)
 
         return X
 
-def search(record, nodep, ncclp, n_gen=30):
+def search(record, nodep, ncclp, n_gen=10):
     problem = MyProblem(record)
 
     algorithm = BRKGA(
         n_elites=64,
         n_offsprings=32,
-        n_mutants=32,
+        n_mutants=64,
         bias=0.7,
         sampling=MySampling(nodep, ncclp),
         eliminate_duplicates=True)

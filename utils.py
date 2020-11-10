@@ -130,3 +130,10 @@ def cadr(x):
 def info(*args):
     import sys
     print(*args, file=sys.stdout, flush=True)
+
+def positional_encoding(n_pos, dim):
+    import numpy as np
+    p = np.array([[pos / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)] for pos in range(n_pos)])
+    p[:, 0::2] = np.sin(p[:, 0::2])
+    p[:, 1::2] = np.cos(p[:, 1::2])
+    return p

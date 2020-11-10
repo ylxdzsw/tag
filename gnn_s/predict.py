@@ -16,6 +16,9 @@ with tf.device("/gpu:1"):
     model.load_weights('weights')
 
     # for record in records:
+    #     if 'elites' not in record:
+    #         info('== no data ==')
+    #         continue
     #     bestloss, bestnode, bestnccl = record['elites'][0]
     #     for loss, node, nccl in record['elites']:
     #         if loss < bestloss:
@@ -27,7 +30,7 @@ with tf.device("/gpu:1"):
 
     # raise SystemExit()
 
-    record = records[-6]
+    record = records[11]
     bestloss, bestnode, bestnccl = record['elites'][0]
     for loss, node, nccl in record['elites']:
         if loss < bestloss:
@@ -54,19 +57,19 @@ with tf.device("/gpu:1"):
     for s, c in d.items():
         info(s, c)
 
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]])
+    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=['Adam'])
     tge.set_strategy(strategy)
-    tge.fill_batchsize(120)
-    tge.replace_placeholder(120)
+    tge.fill_batchsize(240)
+    tge.replace_placeholder(240)
     tge.set_bandwidth(intra=int(record["intra"]), inter=int(record["inter"]))
     tge.set_nccl_model(record["nccl_models"])
     time, mem = tge.evaluate(record["prof_data"], "trace_best.json")
 
     strategy = { gdef.node[i].name: [1] + [ 1 for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["cgroups"]) for i in group }
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]])
+    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=['Adam'])
     tge.set_strategy(strategy)
-    tge.fill_batchsize(120)
-    tge.replace_placeholder(120)
+    tge.fill_batchsize(240)
+    tge.replace_placeholder(240)
     tge.set_bandwidth(intra=int(record["intra"]), inter=int(record["inter"]))
     tge.set_nccl_model(record["nccl_models"])
     time, mem = tge.evaluate(record["prof_data"], "trace_dp.json")

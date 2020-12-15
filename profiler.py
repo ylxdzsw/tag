@@ -79,10 +79,13 @@ class Profiler:
             tf.import_graph_def(self.graph_def)
             graph = tf.get_default_graph()
             for op in graph.get_operations():
+                if 'embeddings' in op.name:
+                    op._set_device('/CPU:0')
+                    continue
                 op._set_device(device)
             init = graph.get_operation_by_name("import/init")
 
-            sess = tf.Session(self.target)#, config=tf.ConfigProto(allow_soft_placement=False))
+            sess = tf.Session(self.target, config=tf.ConfigProto(allow_soft_placement=True))
             sess.run(init)
 
             placeholders = (node.outputs[0] for node in graph.get_operations() if node.node_def.op == 'Placeholder')

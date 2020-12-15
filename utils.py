@@ -39,6 +39,8 @@ def adapt_batchsize(profile_data, original_batchsize, new_batchsize, nrep_limit)
         try:
             return [y for _x, y in data if _x == x ][0]
         except:
+            if len(data) <= 1: # currently only for bert
+                data.append((0, 0)) # TODO: inspect the gdef and identify nodes whose inputs' sizes are fixed (ApplyAdam and related). Append (0, data[0][0]) for thoses nodes
             model = LinearRegression().fit([[x] for x, y in data], [[y] for x, y in data])
             return max(int(model.predict([[x]])[0][0]), 0)
 

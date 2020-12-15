@@ -4,7 +4,7 @@ import tensorflow as tf
 
 from data import get_all_data
 from model import Model
-from environment import sample, evaluate, sample_and_evaluate, reference
+from environment import sample, evaluate, sample_and_evaluate, base_strategies, f
 from search import search
 from utils import save, load, info
 
@@ -25,7 +25,7 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00004, clipnorm=6)
     L2_regularization_factor = .00001
 
     for epoch in range(20000):
@@ -33,13 +33,17 @@ with tf.device("/gpu:0"):
         record = records[record_id]
 
         if 'reference' not in record:
-            reference(record)
+            record['reference'] = []
+            for nodemask, ncclmask in base_strategies(record):
+                ncclmask = np.array(ncclmask)
+                loss_env = f((record, np.hstack([np.reshape(nodemask, (-1, )), ncclmask])))
+                record['reference'].append((loss_env, nodemask, ncclmask))
             save(records, "records")
 
         if 'elites' not in record:
-            nodep = np.ones((len(record['cgroups']) * len(record['devices']), 3), dtype=np.float) / 3
-            ncclp = np.ones(len(record['cgroups']), dtype=np.float) / 2
-            record['elites'] = [search(record, nodep, ncclp, n_gen=25)]
+            for loss_env, nodemask, ncclmask in record['reference']:
+                if 'elites' not in record or record['elites'][0][0] > loss_env:
+                    record['elites'] = [(loss_env, nodemask, ncclmask)]
             save(records, "records")
 
         cnfeats = tf.convert_to_tensor(record["cnfeats"], dtype=tf.float32)
@@ -51,15 +55,16 @@ with tf.device("/gpu:0"):
         model.set_groups(record["cgroups"], record["tgroups"])
 
         # search
-        if epoch % 10 == 0:
+        if epoch > 100 and epoch % 40 == 0:
             nodelogit, nccllogit = model([cnfeats, cefeats, cntypes, tnfeats, tefeats], training=False)
             nodep = tf.nn.softmax(nodelogit).numpy()
             ncclp = tf.math.sigmoid(nccllogit).numpy()
             loss_env, nodemask, ncclmask = search(record, nodep, ncclp)
-            record['elites'].append((loss_env, nodemask, ncclmask))
-            record["elites"] = record["elites"][-100:]
+            if loss_env < record['elites'][-1][0] * 1.05:
+                record['elites'].append((loss_env, nodemask, ncclmask))
+                record["elites"] = record["elites"][-4:]
 
-            info(record_id, loss_env, record['reference'])
+            info(record_id, loss_env, [ x for x, _, _ in record['reference'] ])
 
         # learn
         with tf.GradientTape() as tape:
@@ -74,12 +79,13 @@ with tf.device("/gpu:0"):
                 nodemask = tf.one_hot(nodemask, depth=3).numpy()
                 loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
                 loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit))
+            loss /= len(record['elites'])
 
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:
                     loss += L2_regularization_factor * tf.nn.l2_loss(weight)
 
-            info(loss.numpy())
+            info(record_id, loss.numpy())
 
             grads = tape.gradient(loss, model.trainable_weights)
             # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])

@@ -173,4 +173,4 @@ class Model(tf.keras.Model):
             x = tf.concat([x, t_embedding], 1)
             batches.append(x)
 
-        return self.final_strategy(tf.concat(batches, 0)) / 20, tf.squeeze(self.final_nccl(c_embedding) / 20, axis=1)
+        return self.final_strategy(tf.concat(batches, 0)) / 10, tf.squeeze(self.final_nccl(c_embedding) / 20, axis=1)

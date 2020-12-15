@@ -113,7 +113,6 @@ def bert(bsize=None):
     return optimizer
 
 import tensorflow as tf
-import numpy as np
 import pickle
 from profiler import Profiler
 from utils import adapt_batchsize
@@ -124,35 +123,35 @@ BATCHSIZE = {
     "mlp": 120,
     "lenet": 120,
     "inception": 120,
-    "transformer": 1200,
+    "transformer": 480,
     "mobilenet": 120,
     "nasnet": 120,
-    "bert": 4
+    "bert": 2
 }
 
-times = 5
+devices = (
+    "/GPU:0",
+    "/GPU:1"
+)
 
 import sys
 model_fn = eval(sys.argv[1])
-gtype = sys.argv[2]
 prof_batch_size = BATCHSIZE[sys.argv[1]]
-target_batch_size = max(8, prof_batch_size)
+target_batch_size = min(max(8, prof_batch_size), 480)
 
 prof_dict = {}
 for nrep in (2, 4, 6, 8):
-    if prof_batch_size // nrep <= 0:
-        continue
     tf.reset_default_graph()
     opt = model_fn()
     init = tf.global_variables_initializer()
     gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-    ps = [ Profiler(gdef, prof_batch_size // nrep, sinks=["Adam"]) for _ in range(times) ]
+    p = Profiler(gdef, prof_batch_size // nrep, sinks=["Adam"])
     for node in gdef.node:
-        prof_dict[(node.name, nrep)] = [int(np.median([ p.profile(node.name, "/GPU:0") for p in ps ]))]
+        prof_dict[(node.name, nrep)] = [ p.profile(node.name, device) for device in devices ]
 prof_dict = adapt_batchsize(prof_dict, prof_batch_size, target_batch_size, 16)
 tf.reset_default_graph()
 opt = model_fn()
 init = tf.global_variables_initializer()
 gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-with open("{}_{}.pickle".format(model_fn.__name__, gtype), 'wb') as f:
-    pickle.dump((gdef, prof_dict, gtype, target_batch_size), f)
+with open("{}.pickle".format(model_fn.__name__), 'wb') as f:
+    pickle.dump((gdef, prof_dict, target_batch_size), f)

@@ -15,9 +15,10 @@ def sample(logit, e=0):
 def evaluate(record, ncclmask, nodemask):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
-    strategy = { gdef.node[i].name: [int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
+    # strategy = { gdef.node[i].name: [int(ncclmask[i])] + [ int(nodemask[i, j]) for j in range(nodemask.shape[1]) ] for i in range(nodemask.shape[0]) }
+    strategy = { gdef.node[i].name: [int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["cgroups"]) for i in group }
     # info(strategy)
-    leftout = [ gi for gi in range(len(record["op_groups"])) if np.sum(nodemask[gi, :]) == 0 ]
+    leftout = [ gi for gi in range(len(record["cgroups"])) if np.sum(nodemask[gi, :]) == 0 ]
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
             v[1] = 1
@@ -51,9 +52,9 @@ def sample_and_evaluate(record, placement_logit):
 
 def f(arg):
     record, pheno = arg
-    nodemask = pheno[:len(record['op_groups']) * len(record['devices'])]
-    ncclmask = pheno[len(record['op_groups']) * len(record['devices']):]
-    nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))
+    nodemask = pheno[:len(record['cgroups']) * len(record['devices'])]
+    ncclmask = pheno[len(record['cgroups']) * len(record['devices']):]
+    nodemask = np.reshape(nodemask, (len(record['cgroups']), len(record['devices'])))
     time, oom, leftout = evaluate(record, ncclmask, nodemask)
     nerror = len(oom) + len(leftout)
     return time * (1 + 10 * nerror)
@@ -61,7 +62,7 @@ def f(arg):
 def base_strategies(record):
     result = []
 
-    ncgroups = len(record['op_groups'])
+    ncgroups = len(record['cgroups'])
     ndevices = len(record['devices'])
 
     # 1: gpu0 + ps

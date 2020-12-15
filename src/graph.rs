@@ -807,6 +807,7 @@ impl Tensor {
             node.attr.insert("group_size".into(), AttrValue::new().apply(|x| x.set_i(local_summed.len() as _)));
             node.attr.insert("instance_key".into(), AttrValue::new().apply(|x| x.set_i(instance_key as _)));
             node.attr.insert("subdiv_offsets".into(), AttrValue::new().apply(|x| x.mut_list().i = vec![0]));
+            // node.attr.insert("communication_hint".into(), AttrValue::new().apply(|x| x.set_s(b"auto".to_vec())));
             node.input.push(local_name.clone());
             set_input_size(&mut node, 0, part_size);
 

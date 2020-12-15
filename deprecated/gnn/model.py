@@ -1,7 +1,7 @@
 import tensorflow as tf
 import dgl.function as fn
 import numpy as np
-from utils import info, positional_encoding
+from utils import info
 
 all_etypes = ["link", "prev", "succ", "place", "serve"]
 
@@ -38,11 +38,14 @@ class GConv(tf.keras.layers.Layer):
         return self.activation(op_feats + op_dst), self.activation(device_feats + device_dst)
 
 class Model(tf.keras.Model):
-    def __init__(self):
+    def __init__(self, op_table):
         super(Model, self).__init__()
 
-        node_hidden = 64
+        node_hidden = 40
         edge_hidden = 8
+        op_embedding_len = 8
+
+        self.op_embedding = tf.keras.layers.Embedding(len(op_table), op_embedding_len, input_length=1)
 
         self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.elu)
         self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.elu)
@@ -52,20 +55,24 @@ class Model(tf.keras.Model):
             GConv(node_hidden, tf.nn.elu),
             GConv(node_hidden, tf.nn.elu),
             GConv(node_hidden, tf.nn.elu),
-            GConv(node_hidden, tf.nn.elu),
-            GConv(node_hidden, tf.nn.elu),
             GConv(node_hidden, tf.identity)
         ]
 
-        self.final_place = tf.keras.layers.Dense(3, activation=None)
-        self.final_nccl = tf.keras.layers.Dense(1, activation=None)
+        self.final_place = tf.keras.layers.Dense(1, activation=None)
+        # self.final_nccl = tf.keras.layers.Dense(1, activation=None)
 
     def set_graph(self, graph):
-        # self.graph = graph.to('gpu:0')
-        self.graph = graph
+        self.graph = graph.to('gpu:0')
+
+    def set_groups(self, op_groups, device_groups):
+        self.op_groups = op_groups
+        self.device_groups = device_groups
 
     def call(self, inputs):
-        [op_feats, device_feats, tensor_feats, link_feats, place_feats] = inputs
+        [op_feats, device_feats, tensor_feats, link_feats, placement_feats, op_types, nodes_to_place] = inputs
+
+        op_embedding = self.op_embedding(tf.expand_dims(op_types, 1)) # shape: (n_nodes, 1, op_embedding_len)
+        op_feats = tf.concat([op_feats, tf.squeeze(op_embedding, axis=1), tf.expand_dims(nodes_to_place, 1)], 1)
 
         op_feats = self.op_trans(op_feats)
         device_feats = self.device_trans(device_feats)
@@ -74,13 +81,19 @@ class Model(tf.keras.Model):
             "link": link_feats,
             "prev": tensor_feats,
             "succ": tensor_feats,
-            "place": place_feats,
-            "serve": place_feats
+            "place": placement_feats,
+            "serve": placement_feats
         }
         edge_feats = { etype: self.edge_trans[etype](edge_feats[etype]) for etype in all_etypes }
 
         for gconv_layer in self.gconv_layers:
             op_feats, device_feats = gconv_layer(self.graph, op_feats, device_feats, edge_feats)
+
+        # if self.cgroups is not None:
+        #     c_embedding = tf.concat([tf.expand_dims(tf.math.add_n([c_embedding[i, :] for i in group]), 0) for group in self.cgroups], 0)
+
+        # if self.tgroups is not None:
+        #     t_embedding = tf.concat([tf.expand_dims(tf.math.add_n([t_embedding[i, :] for i in group]), 0) for group in self.tgroups], 0)
 
         g = self.graph['place'].local_var()
         g.srcdata['i'] = op_feats
@@ -90,4 +103,4 @@ class Model(tf.keras.Model):
             return { 'd': self.final_place(tf.concat([edge.src['i'], edge.data['i'], edge.dst['i']], axis=1))  }
         g.apply_edges(decision)
 
-        return g.edata['d'], tf.squeeze(self.final_nccl(op_feats), axis=1)
+        return g.edata['d']

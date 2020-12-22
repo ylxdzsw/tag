@@ -280,5 +280,13 @@ class TGE:
         self.set_strategy(decisions)
 
     @chain
-    def set_strategy(self, strategy): # each value is an array, where the first element is 0 or 1 indicating PS or all-reduce, followed by the devices
+    def set_strategy(self, strategy):
+        # each value is an array, where the first element indicating communication strategy, followed by the devices.
+        # communication strategies:
+        #   -i: PS with the i-th device used as the server. The device does not necessarily appear in the device list (use a dedicated PS server)
+        #    0: equivalent to -1 for backward compatibility
+        #    1: all reduce via collective operator (which uses NCCL)
+        #    2: all reduce via GRPC ring
+        #    3: all reduce via NCCL operator (does not support multiple machine)
+        #    4: broadcasting and duplicating
         self.strategy = strategy

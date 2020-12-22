@@ -4,7 +4,7 @@ use crate::graph::*;
 use std::collections::{BTreeSet, BTreeMap};
 use crate::misc::Target;
 
-pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (Vec<usize>, u8)>) { // devices (the same definition of form), aggregation_method
+pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (Vec<usize>, i8)>) { // devices (the same definition of form), aggregation_method
     let allow_split_input = graph.options.contains_key("replace_placeholder");
 
     // do replications as the user requested
@@ -26,7 +26,7 @@ pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (V
         }
     }
 
-    // only split if the whole group is replicated the same times. Otherwise go cache (default).
+    // only split if the whole group is replicated the same times and no member is using strategy 4 (broadcasting sufficient factor). Otherwise go cache (default).
     let mut visited_groups = BTreeSet::new();
     for node in graph.nodes.iter_mut() {
         if node.group.is_some() && !visited_groups.contains(&node.group.as_ref().map(|x| x.as_ptr() as *const _).unwrap()) {
@@ -36,7 +36,7 @@ pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (V
             }
             let group = &node.group.as_ref().unwrap().borrow();
             let n = node.form.ndev();
-            if n > 1 && group.iter().copied().all(|x| node.graph().nodes[x].form.ndev() == n) {
+            if n > 1 && group.iter().map(|x| &node.graph().nodes[*x]).all(|x| x.form.ndev() == n && !matches!(strategy.get(&x.raw_node.name[..]), Some((_, 4)))) {
                 for member in group.iter() {
                     let member = &mut node.graph().nodes[*member];
                     if member.inputs.is_empty() && member.is_input() {
@@ -72,8 +72,9 @@ pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (V
                                 3 => grad.all_reduce_sum_nccl(&grad.node().form, &node.form, target),
                                 _ => unreachable!()
                             },
-                            _ => {
-                                let x = grad.aggregate_sum(&grad.node().form, &node.form.clone().apply(|x| x.devices.truncate(1)), target);
+                            _ => { // remember node.form.ndev() may not equal to grad.node().form.ndev()
+                                let ps = s.map_or(0, |x| -core::cmp::min(x.1, -1) - 1) as _;
+                                let x = grad.aggregate_sum(&grad.node().form, &node.form.clone().apply(|x| x.devices = vec![ps]), target);
                                 if node.form.ndev() > 1 {
                                     (0..node.form.ndev()).map(|_| x[0].clone()).collect()
                                 } else {

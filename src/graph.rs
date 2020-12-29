@@ -521,7 +521,6 @@ impl Tensor {
                         }
 
                         if self.has_flag(Self::IS_BATCHED) {
-                            println!("aggregate cat");
                             self.aggregate_cat(&self.node().form, form, target)
                         } else { // if it is not batched but is split, the only possibility is it is inherited from a split parent, so it must be a gradient
                             self.aggregate_sum(&self.node().form, form, target)

@@ -37,7 +37,7 @@ from pymoo.optimize import minimize
 from pymoo.model.sampling import Sampling
 
 class MySampling(Sampling):
-    def __init__(self, seeds, nodep, ncclp, psp, cap=0.02):
+    def __init__(self, seeds, nodep, ncclp, psp, cap=0.002):
         super().__init__()
         self.seeds = seeds
         self.nodep = nodep * (1 - cap) + 1/3 * cap

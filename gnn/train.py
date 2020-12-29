@@ -65,7 +65,7 @@ with tf.device("/gpu:0"):
                 record['elites'].append((loss_env, nodemask, ncclmask, psmask))
                 record["elites"] = record["elites"][-4:]
 
-            info(record_id, loss_env, [ x for x, _, _ in record['reference'] ])
+            info(record_id, loss_env, [ x for x, _, _, _ in record['reference'] ])
 
         # learn
         with tf.GradientTape() as tape:

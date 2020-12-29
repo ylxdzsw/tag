@@ -283,7 +283,7 @@ class TGE:
     def set_strategy(self, strategy):
         # each value is an array, where the first element indicating communication strategy, followed by the devices.
         # communication strategies:
-        #   -i: PS with the i-th device used as the server. The device does not necessarily appear in the device list (use a dedicated PS server)
+        #   -i: PS with the i-th (starts from 1) device used as the server. The device does not necessarily appear in the device list (use a dedicated PS server)
         #    0: equivalent to -1 for backward compatibility
         #    1: all reduce via collective operator (which uses NCCL)
         #    2: all reduce via GRPC ring

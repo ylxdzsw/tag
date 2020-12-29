@@ -4,7 +4,7 @@ import tensorflow as tf
 
 from data import get_all_data
 from model import Model
-from environment import sample, evaluate, sample_and_evaluate, replication_number_feasibility_rounding
+from environment import sample, replication_number_feasibility_rounding
 from search import search
 from utils import save, load, info
 from tge import TGE
@@ -29,23 +29,23 @@ with tf.device("/gpu:1"):
     place_feats  = tf.convert_to_tensor(record["place_feats"], dtype=tf.float32)
     model.set_graph(record["graph"])
 
-    nodelogit, nccllogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
+    nodelogit, nccllogit, pslogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
     nodep = tf.nn.softmax(nodelogit).numpy()
     ncclp = tf.math.sigmoid(nccllogit).numpy()
-    loss_env, nodemask, ncclmask = search(record, nodep, ncclp, n_gen=35)
+    psp = tf.nn.softmax(tf.reshape(pslogit, (len(record['op_groups']), len(record['devices'])))).numpy()
+    loss_env, nodemask, ncclmask, psmask = search(record, nodep, ncclp, psp, n_gen=35)
     nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))
 
-    save((nodemask, ncclmask), "shit.pickle")
+    save((nodemask, ncclmask, psmask, psmask), "shit.pickle")
 
     replication_number_feasibility_rounding(record, nodemask)
 
     # loss_env, nodemask, ncclmask = record['elites'][-1]
 
-    info(nodemask, ncclmask)
-
+    info(nodemask, ncclmask, psmask)
 
     gdef = record["gdef"]
-    strategy = { gdef.node[i].name: [int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
+    strategy = { gdef.node[i].name: [-int(psmask[gi]) if int(ncclmask[gi]) == 0 else int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
             v[1] = 1

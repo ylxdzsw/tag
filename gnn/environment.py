@@ -12,10 +12,10 @@ def sample(logit, e=0):
             return int(np.random.rand() < x)
     return np.vectorize(f)(p)
 
-def evaluate(record, ncclmask, nodemask):
+def evaluate(record, nodemask, ncclmask, psmask):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
-    strategy = { gdef.node[i].name: [int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
+    strategy = { gdef.node[i].name: [-1-int(psmask[gi]) if int(ncclmask[gi]) == 0 else int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
     # info(strategy)
     leftout = [ gi for gi in range(len(record["op_groups"])) if np.sum(nodemask[gi, :]) == 0 ]
     for k, v in strategy.items():
@@ -32,29 +32,13 @@ def evaluate(record, ncclmask, nodemask):
     oom = [ i for i in range(len(mem)) if mem[i] > record["devices"][i][2] ]
     return np.sqrt(time / 1_000_000), oom, leftout
 
-def sample_and_evaluate(record, placement_logit):
-    placement_mask = sample(nodelogit)
-    sqrt_time, oom, leftout = evaluate(record, placement_mask)
-
-    if 'hist' not in record:
-        record["hist"] = []
-
-    if len(oom) == 0 and len(leftout) == 0:
-        record["hist"].append(sqrt_time)
-        record["hist"] = record["hist"][-100:]
-        baseline = np.mean(record["hist"])
-        advantage = -(sqrt_time - baseline) / baseline
-    else:
-        advantage = 0
-
-    return ncclmask, nodemask, advantage, sqrt_time, oom, leftout
-
 def f(arg):
     record, pheno = arg
     nodemask = pheno[:len(record['op_groups']) * len(record['devices'])]
-    ncclmask = pheno[len(record['op_groups']) * len(record['devices']):]
+    ncclmask = pheno[len(record['op_groups']) * len(record['devices']):-len(record['op_groups'])]
+    psmask = pheno[-len(record['op_groups']):]
     nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))
-    time, oom, leftout = evaluate(record, ncclmask, nodemask)
+    time, oom, leftout = evaluate(record, nodemask, ncclmask, psmask)
     nerror = len(oom) + len(leftout)
     return time * (1 + 10 * nerror)
 
@@ -68,14 +52,14 @@ def base_strategies(record):
     s = np.zeros((ncgroups, ndevices), dtype=np.int)
     for i in range(ncgroups):
         s[i, 0] = 1
-    result.append((s, [0] * ncgroups))
+    result.append((s, [0] * ncgroups, [0] * ncgroups))
 
     # 2: gpu0 + gpu1 + nccl
     s = np.zeros((ncgroups, ndevices), dtype=np.int)
     for i in range(ncgroups):
         s[i, 0] = 1
         s[i, 1] = 1
-    result.append((s, [1] * ncgroups))
+    result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     # 3: gpu0 + gpu1 + gpu2 + gpu3 + nccl
     if ndevices >= 4:
@@ -85,15 +69,15 @@ def base_strategies(record):
             s[i, 1] = 1
             s[i, 2] = 1
             s[i, 3] = 1
-        result.append((s, [1] * ncgroups))
+        result.append((s, [1] * ncgroups, [0] * ncgroups))
 
-    # 4. all + ps
+    # 4. all + ps (round robin)
     s = np.ones((ncgroups, ndevices), dtype=np.int)
-    result.append((s, [0] * ncgroups))
+    result.append((s, [0] * ncgroups, [ i % ndevices for i in range(ncgroups) ]))
 
     # 5. all + nccl
     s = np.ones((ncgroups, ndevices), dtype=np.int)
-    result.append((s, [1] * ncgroups))
+    result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     # 6. first 4 * 2 + rest * 1 + nccl
     if ndevices >= 5:
@@ -103,7 +87,7 @@ def base_strategies(record):
             s[i, 1] = 2
             s[i, 2] = 2
             s[i, 3] = 2
-        result.append((s, [1] * ncgroups))
+        result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     return result
 

@@ -47,8 +47,8 @@ for k, v in strategy.items():
     if np.sum(v[1:]) == 0:
         v[1] = 1
 
-for k, v in strategy.items():
-    v[0] = 0
+# for k, v in strategy.items():
+#     v[0] = 0
 
 tge = TGE(gdef, devices, sinks=["Adam"])
 tge.set_strategy(strategy)

@@ -59,6 +59,7 @@ class Model(tf.keras.Model):
 
         self.final_place = tf.keras.layers.Dense(3, activation=None)
         self.final_nccl = tf.keras.layers.Dense(1, activation=None)
+        self.final_ps = tf.keras.layers.Dense(1, activation=None)
 
     def set_graph(self, graph):
         # self.graph = graph.to('gpu:0')
@@ -87,7 +88,10 @@ class Model(tf.keras.Model):
         g.dstdata['i'] = device_feats
         g.edata['i'] = edge_feats['place']
         def decision(edge):
-            return { 'd': self.final_place(tf.concat([edge.src['i'], edge.data['i'], edge.dst['i']], axis=1))  }
+            return {
+                'd': self.final_place(tf.concat([edge.src['i'], edge.data['i'], edge.dst['i']], axis=1)),
+                'p': self.final_ps(tf.concat([edge.src['i'], edge.data['i'], edge.dst['i']], axis=1))
+            }
         g.apply_edges(decision)
 
-        return g.edata['d'], tf.squeeze(self.final_nccl(op_feats), axis=1)
+        return g.edata['d'], tf.squeeze(self.final_nccl(op_feats), axis=1), tf.squeeze(g.edata['p'], axis=1)

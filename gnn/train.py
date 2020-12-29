@@ -4,7 +4,7 @@ import tensorflow as tf
 
 from data import get_all_data
 from model import Model
-from environment import sample, evaluate, sample_and_evaluate, base_strategies, f
+from environment import sample, evaluate, base_strategies, f
 from search import search
 from utils import save, load, info
 
@@ -34,16 +34,17 @@ with tf.device("/gpu:0"):
 
         if 'reference' not in record:
             record['reference'] = []
-            for nodemask, ncclmask in base_strategies(record):
+            for nodemask, ncclmask, psmask in base_strategies(record):
                 ncclmask = np.array(ncclmask)
-                loss_env = f((record, np.hstack([np.reshape(nodemask, (-1, )), ncclmask])))
-                record['reference'].append((loss_env, nodemask, ncclmask))
+                psmask = np.array(psmask)
+                loss_env = f((record, np.hstack([np.reshape(nodemask, (-1, )), ncclmask, psmask])))
+                record['reference'].append((loss_env, nodemask, ncclmask, psmask))
             save(records, "records")
 
         if 'elites' not in record:
-            for loss_env, nodemask, ncclmask in record['reference']:
+            for loss_env, nodemask, ncclmask, psmask in record['reference']:
                 if 'elites' not in record or record['elites'][0][0] > loss_env:
-                    record['elites'] = [(loss_env, nodemask, ncclmask)]
+                    record['elites'] = [(loss_env, nodemask, ncclmask, psmask)]
             save(records, "records")
 
         op_feats     = tf.convert_to_tensor(record["op_feats"], dtype=tf.float32)
@@ -55,12 +56,13 @@ with tf.device("/gpu:0"):
 
         # search
         if epoch > 100 and epoch % 50 == 0:
-            nodelogit, nccllogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
+            nodelogit, nccllogit, pslogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
             nodep = tf.nn.softmax(nodelogit).numpy()
             ncclp = tf.math.sigmoid(nccllogit).numpy()
-            loss_env, nodemask, ncclmask = search(record, nodep, ncclp)
-            if loss_env < record['elites'][-1][0] * 1.05:
-                record['elites'].append((loss_env, nodemask, ncclmask))
+            psp = tf.nn.softmax(tf.reshape(pslogit, (len(record['op_groups']), len(record['devices'])))).numpy()
+            loss_env, nodemask, ncclmask, psmask = search(record, nodep, ncclp, psp)
+            if loss_env < record['elites'][-1][0]:
+                record['elites'].append((loss_env, nodemask, ncclmask, psmask))
                 record["elites"] = record["elites"][-4:]
 
             info(record_id, loss_env, [ x for x, _, _ in record['reference'] ])
@@ -68,16 +70,18 @@ with tf.device("/gpu:0"):
         # learn
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
-            nodelogit, nccllogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=True)
+            nodelogit, nccllogit, pslogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=True)
 
             # info(tf.nn.softmax(nodelogit).numpy())
             # info(nodelogit.numpy())
 
             loss = 0
-            for loss_env, nodemask, ncclmask in record['elites']:
+            for loss_env, nodemask, ncclmask, psmask in record['elites']:
                 nodemask = tf.one_hot(nodemask, depth=3).numpy()
+                psmask = tf.one_hot(psmask, depth=len(record["devices"])).numpy()
                 loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
                 loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit))
+                loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(psmask.astype(np.float32), tf.reshape(pslogit, psmask.shape)) * ncclmask)
             loss /= len(record['elites'])
 
             if L2_regularization_factor > 0:

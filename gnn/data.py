@@ -79,7 +79,7 @@ def gen_data(gdef, prof_data, batchsize, devices, intra=2810, inter=2810):
     name_dict = { node.name: i for i, node in enumerate(gdef.node) }
     group_dict = { nodeid: groupid for groupid, nodes in enumerate(op_groups) for nodeid in nodes }
     for thisnodeid, node in enumerate(gdef.node):
-        thisgroupid = group_dict[i]
+        thisgroupid = group_dict[thisnodeid]
         for input in node.input:
             x, input_index = parse_input(input)
             nodeid = name_dict[x]
@@ -161,50 +161,7 @@ def get_all_data():
             agg_prof_data[gtype] = prof_data
         models.append((gdef, agg_prof_data, batchsize))
 
-    # topos1 = [gen_topo([
-    #     ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:2", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:3", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:4", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:5", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:6", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:7", 2, 6<<30),
-    # ], intra=bandwidth) for bandwidth in (4000, 40000)]
-    # topos2 = [gen_topo([
-    #     ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:2", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:3", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:4", 3, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:5", 3, 6<<30),
-    # ], intra=bandwidth) for bandwidth in (4000, 20000, 80000)]
-    # topos3 = [gen_topo([
-    #     ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:2", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:0/device:GPU:3", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:1", 1, 6<<30),
-    # ], intra=bandwidth, inter=1000) for bandwidth in (8000, 80000)]
-    # topos4 = [gen_topo([
-    #     ("/job:worker/replica:0/task:0/device:GPU:0", 2, 6<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:0", 1, 10<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:1", 1, 10<<30),
-    # ], intra=8000, inter=2810)]
-    # topos5 = [gen_topo([
-    #     ("/job:worker/replica:0/task:0/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:1/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:2/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:2/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:2/device:GPU:2", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:3/device:GPU:0", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:3/device:GPU:1", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:3/device:GPU:2", 1, 6<<30),
-    #     ("/job:worker/replica:0/task:3/device:GPU:3", 1, 6<<30),
-    # ], intra=8000, inter=2810)]
-    topos6 = [([
+    topos1 = [([
         ("/job:worker/replica:0/task:0/device:GPU:0", '1080ti', 6<<30),
         ("/job:worker/replica:0/task:0/device:GPU:1", '1080ti', 6<<30),
         ("/job:worker/replica:0/task:1/device:GPU:0", '1080ti', 6<<30),
@@ -213,16 +170,23 @@ def get_all_data():
         ("/job:worker/replica:0/task:2/device:GPU:1", 'v100', 8<<30),
         ("/job:worker/replica:0/task:2/device:GPU:2", 'v100', 8<<30),
         ("/job:worker/replica:0/task:2/device:GPU:3", 'v100', 8<<30),
-    ], 8000, 2810)]
-    topos7 = [([
+    ], inter, 2810) for inter in (8000, 20000)]
+    topos2 = [([
         ("/job:worker/replica:0/task:0/device:GPU:0", '1080ti', 6<<30),
         ("/job:worker/replica:0/task:0/device:GPU:1", '1080ti', 6<<30),
         ("/job:worker/replica:0/task:1/device:GPU:0", '1080ti', 6<<30),
         ("/job:worker/replica:0/task:2/device:GPU:0", 'v100', 8<<30),
         ("/job:worker/replica:0/task:2/device:GPU:1", 'v100', 8<<30),
-    ], 8000, 2810)]
+    ], inter, 2810) for inter in (8000, 20000)]
+    topos3 = [([
+        ("/job:worker/replica:0/task:0/device:GPU:0", '1080ti', 12<<30),
+        ("/job:worker/replica:0/task:0/device:GPU:1", '1080ti', 12<<30),
+        ("/job:worker/replica:0/task:1/device:GPU:0", '1080ti', 12<<30),
+        ("/job:worker/replica:0/task:2/device:GPU:0", 'v100', 16<<30),
+        ("/job:worker/replica:0/task:2/device:GPU:1", 'v100', 16<<30),
+    ], inter, 2810) for inter in (4000, 10000)]
 
-    return [gen_data(gdef, prof_data, batchsize, devices, intra, inter) for gdef, prof_data, batchsize in models for devices, intra, inter in topos6 + topos7]
+    return [gen_data(gdef, prof_data, batchsize, devices, intra, inter) for gdef, prof_data, batchsize in models for devices, intra, inter in topos1 + topos2 + topos3]
 
 # prim's algorithm
 # alternative: https://networkx.github.io/documentation/stable/reference/algorithms/tree.html#module-networkx.algorithms.tree.mst

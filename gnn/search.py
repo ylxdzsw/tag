@@ -50,7 +50,7 @@ class MySampling(Sampling):
         for i in range(n_samples):
             nd = self.psp.shape[1]
             node = np.array([np.random.choice(3, p=self.nodep[j, :]) / 2 * 2.999999 for j in range(self.nodep.shape[0])])
-            nccl = (np.random.rand(len(self.ncclp)) < self.ncclp) * 2
+            nccl = np.random.rand(len(self.ncclp)) < self.ncclp
             ps = np.array([np.random.choice(nd, p=self.psp[j, :]) / (nd - 1) * (nd - .000001) for j in range(self.psp.shape[0])])
             X[i, :] = np.hstack([node, nccl, ps])
 
@@ -74,7 +74,7 @@ def search(record, nodep, ncclp, psp, n_gen=20):
         n_elites=64,
         n_offsprings=64,
         n_mutants=16,
-        bias=0.9,
+        bias=0.8,
         sampling=MySampling(seeds, nodep, ncclp, psp),
         eliminate_duplicates=True)
         # eliminate_duplicates=MyElementwiseDuplicateElimination)

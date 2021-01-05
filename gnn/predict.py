@@ -16,7 +16,7 @@ with tf.device("/gpu:1"):
     model.load_weights('weights')
 
     for rid, record in enumerate(records):
-        info(rid, record['elites'][-1][0], [ loss_env for loss_env, _, _ in record['reference'] ] )
+        info(rid, record['elites'][-1][0], [ loss_env for loss_env, _, _, _ in record['reference'] ] )
 
     # raise SystemExit()
 
@@ -33,6 +33,9 @@ with tf.device("/gpu:1"):
     nodep = tf.nn.softmax(nodelogit).numpy()
     ncclp = tf.math.sigmoid(nccllogit).numpy()
     psp = tf.nn.softmax(tf.reshape(pslogit, (len(record['op_groups']), len(record['devices'])))).numpy()
+
+    info(nodep)
+
     loss_env, nodemask, ncclmask, psmask = search(record, nodep, ncclp, psp, n_gen=35)
     nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))
 

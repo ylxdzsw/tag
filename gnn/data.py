@@ -69,7 +69,7 @@ def gen_data(gdef, prof_data, batchsize, devices, intra=2810, inter=2810):
         id_list = group_around_topk_costs(gdef, base_groups, prof_data[devices[0][1]], n_groups-1) # TODO: use average time in all gpu types? weighted average?
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
-    n_groups = 2 * len(devices)
+    n_groups = 2 * len(devices) + 4
     op_groups = group_with_topk_layers(n_groups)
 
     parameter_sizes = np.zeros(n_groups)

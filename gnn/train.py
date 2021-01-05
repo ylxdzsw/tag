@@ -25,7 +25,7 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00004, clipnorm=6)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00005, clipnorm=6)
     L2_regularization_factor = .00001
 
     for epoch in range(20000):
@@ -55,7 +55,7 @@ with tf.device("/gpu:0"):
         model.set_graph(record["graph"])
 
         # search
-        if epoch > 100 and epoch % 50 == 0:
+        if epoch > 200 and epoch % 10 == 0:
             nodelogit, nccllogit, pslogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
             nodep = tf.nn.softmax(nodelogit).numpy()
             ncclp = tf.math.sigmoid(nccllogit).numpy()

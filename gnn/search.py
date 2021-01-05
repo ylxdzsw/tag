@@ -4,6 +4,9 @@ from environment import sample, evaluate, f
 from utils import save, load, info
 
 from pymoo.model.problem import Problem
+from pymoo.algorithms.so_brkga import BRKGA
+from pymoo.model.sampling import Sampling
+from pymoo.optimize import minimize
 
 from multiprocessing import Pool
 
@@ -22,19 +25,6 @@ class MyProblem(Problem):
 
         out["F"] = [[k] for k in ks]
         out["pheno"] = pheno
-        # out["hash"] = hash(str(pheno))
-
-from pymoo.algorithms.so_brkga import BRKGA
-from pymoo.optimize import minimize
-
-# from pymoo.model.duplicate import ElementwiseDuplicateElimination
-
-# class MyElementwiseDuplicateElimination(ElementwiseDuplicateElimination):
-#     def is_equal(self, a, b):
-#         info(a.get("hash"))
-#         return a.get("hash") == b.get("hash")
-
-from pymoo.model.sampling import Sampling
 
 class MySampling(Sampling):
     def __init__(self, seeds, nodep, ncclp, psp, cap=0.002):
@@ -59,8 +49,6 @@ class MySampling(Sampling):
                 X[i, :] = seed
             self.seeds = None
 
-        # X = np.random.rand(n_samples, problem.n_var)
-
         return X
 
 def search(record, nodep, ncclp, psp, n_gen=20):
@@ -77,7 +65,6 @@ def search(record, nodep, ncclp, psp, n_gen=20):
         bias=0.8,
         sampling=MySampling(seeds, nodep, ncclp, psp),
         eliminate_duplicates=True)
-        # eliminate_duplicates=MyElementwiseDuplicateElimination)
 
     res = minimize(problem, algorithm, ("n_gen", n_gen), verbose=False)
     nodemask = res.opt.get("pheno")[0][:len(record['op_groups']) * len(record['devices'])]

@@ -16,7 +16,10 @@ with tf.device("/gpu:1"):
     model.load_weights('weights')
 
     for rid, record in enumerate(records):
-        info(rid, record['elites'][-1][0], [ loss_env for loss_env, _, _, _ in record['reference'] ] )
+        try:
+            info(rid, record['best'], record['base'])
+        except:
+            pass
 
     # raise SystemExit()
 
@@ -29,12 +32,11 @@ with tf.device("/gpu:1"):
     place_feats  = tf.convert_to_tensor(record["place_feats"], dtype=tf.float32)
     model.set_graph(record["graph"])
 
-    nodelogit, nccllogit, pslogit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
-    nodep = tf.nn.softmax(nodelogit).numpy()
-    ncclp = tf.math.sigmoid(nccllogit).numpy()
-    psp = tf.nn.softmax(tf.reshape(pslogit, (len(record['op_groups']), len(record['devices'])))).numpy()
+    placement_logit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
 
-    info(nodep)
+    info(placement_logit)
+
+    raise SystemExit()
 
     loss_env, nodemask, ncclmask, psmask = search(record, nodep, ncclp, psp, n_gen=35)
     nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))

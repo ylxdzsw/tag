@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from environment import sample, evaluate, f
+from environment import fitness
 from utils import save, load, info
 
 from pymoo.model.problem import Problem
@@ -15,63 +15,62 @@ pool = Pool(16)
 class MyProblem(Problem):
     def __init__(self, record):
         self.record = record
-        n = len(record['op_groups']) * len(record['devices']) + len(record['op_groups']) + len(record['op_groups'])
-        super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=[2.999999]*(len(record['op_groups']) * len(record['devices'])) + [1.999999]*len(record['op_groups']) + [len(record["devices"]) - .000001]*len(record['op_groups']) )
+        n = 3 * len(record['op_groups']) * len(record['devices']) + len(record['op_groups']) * (1 + len(record['devices']))
+        super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=1)
 
     def _evaluate(self, x, out, *args, **kwargs):
-        pheno = x.astype(int)
+        n, m = len(self.record['op_groups']), len(self.record['devices'])
+        phenos = []
+        for i in range(x.shape[0]):
+            placement = np.argmax(np.reshape(x[i, :n*m*3], (n*m, 3)), axis=1)
+            communication = np.argmax(np.reshape(x[i, n*m*3:], (n, m+1)), axis=1)
+            phenos.append(np.hstack([placement, communication]))
 
-        ks = pool.map(f, [(self.record, pheno[i, :]) for i in range(pheno.shape[0])])
+        ks = pool.map(fitness, [(self.record, pheno) for pheno in phenos])
 
         out["F"] = [[k] for k in ks]
-        out["pheno"] = pheno
+        out["pheno"] = np.array(phenos)
 
 class MySampling(Sampling):
-    def __init__(self, seeds, nodep, ncclp, psp, cap=0.002):
+    def __init__(self, placement):
         super().__init__()
-        self.seeds = seeds
-        self.nodep = nodep * (1 - cap) + 1/3 * cap
-        self.ncclp = ncclp * (1 - cap) + 0.5 * cap
-        self.psp = psp * (1 - cap) + 1/psp.shape[1] * cap
+        self.p = placement
 
     def _do(self, problem, n_samples, **kwargs):
-        X = np.full((n_samples, problem.n_var), None, dtype=np.float)
+        X = np.random.rand(n_samples, problem.n_var)
 
-        for i in range(n_samples):
-            nd = self.psp.shape[1]
-            node = np.array([np.random.choice(3, p=self.nodep[j, :]) / 2 * 2.999999 for j in range(self.nodep.shape[0])])
-            nccl = np.random.rand(len(self.ncclp)) < self.ncclp
-            ps = np.array([np.random.choice(nd, p=self.psp[j, :]) / (nd - 1) * (nd - .000001) for j in range(self.psp.shape[0])])
-            X[i, :] = np.hstack([node, nccl, ps])
-
-        if self.seeds is not None:
-            for i, seed in enumerate(self.seeds):
-                X[i, :] = seed
-            self.seeds = None
+        n, m = self.p.shape
+        for s in range(n_samples):
+            for p in range(n*m*3):
+                i, j, k = np.unravel_index(p, (n, m, 3))
+                if self.p[i, j] == 1 and k == 0:
+                    X[s, p] **= 2
+                elif self.p[i, j] == 0 and k != 0:
+                    X[s, p] **= 2
+            X[s, n*m*3:] **= 2
 
         return X
 
-def search(record, nodep, ncclp, psp, n_gen=20):
+def search(record, placement, n_gen=15):
     problem = MyProblem(record)
 
-    seeds = None
-    # if 'elites' in record:
-    #     seeds = [ np.hstack([np.reshape(nodemask, (-1, )), ncclmask]) for loss_env, nodemask, ncclmask in record['elites'] ]
-
     algorithm = BRKGA(
-        n_elites=64,
-        n_offsprings=64,
+        n_elites=16,
+        n_offsprings=32,
         n_mutants=16,
         bias=0.8,
-        sampling=MySampling(seeds, nodep, ncclp, psp),
+        sampling=MySampling(placement),
         eliminate_duplicates=True)
 
     res = minimize(problem, algorithm, ("n_gen", n_gen), verbose=False)
-    nodemask = res.opt.get("pheno")[0][:len(record['op_groups']) * len(record['devices'])]
-    ncclmask = res.opt.get("pheno")[0][len(record['op_groups']) * len(record['devices']):-len(record['op_groups'])]
-    psmask = res.opt.get("pheno")[0][-len(record['op_groups']):]
 
     # info("Best solution found: \nX = %s\nF = %s" % (res.X, res.F))
-    # info("Solution", sol)
 
-    return res.F[0], nodemask, ncclmask, psmask
+    return (res.F[0], *decode(record, res.opt.get("pheno")[0]))
+
+def decode(record, pheno):
+    nodemask = np.reshape(pheno[:len(record['op_groups']) * len(record['devices'])], (len(record['op_groups']), len(record['devices'])))
+    ncclmask = (pheno[len(record['op_groups']) * len(record['devices']):] == 0).astype(int)
+    psmask = pheno[len(record['op_groups']) * len(record['devices']):] - 1
+
+    return nodemask, ncclmask, psmask

@@ -32,13 +32,7 @@ def evaluate(record, nodemask, ncclmask, psmask):
     oom = [ i for i in range(len(mem)) if mem[i] > record["devices"][i][2] ]
     return np.sqrt(time / 1_000_000), oom, leftout
 
-def f(arg):
-    record, pheno = arg
-    nodemask = pheno[:len(record['op_groups']) * len(record['devices'])]
-    ncclmask = pheno[len(record['op_groups']) * len(record['devices']):-len(record['op_groups'])]
-    psmask = pheno[-len(record['op_groups']):]
-    nodemask = np.reshape(nodemask, (len(record['op_groups']), len(record['devices'])))
-    time, oom, leftout = evaluate(record, nodemask, ncclmask, psmask)
+def score(time, oom, leftout):
     nerror = len(oom) + len(leftout)
     return time * (1 + 10 * nerror)
 
@@ -119,3 +113,11 @@ def replication_number_feasibility_rounding(record, nodemask):
         nodemask[i, j] += a
 
     return nodemask
+
+def fitness(arg):
+    record, pheno = arg
+    nodemask = np.reshape(pheno[:len(record['op_groups']) * len(record['devices'])], (len(record['op_groups']), len(record['devices'])))
+    ncclmask = (pheno[len(record['op_groups']) * len(record['devices']):] == 0).astype(int)
+    psmask = pheno[len(record['op_groups']) * len(record['devices']):] - 1
+
+    return score(*evaluate(record, nodemask, ncclmask, psmask))

@@ -15,21 +15,33 @@ def sample(logit, e=0):
 def evaluate(record, nodemask, ncclmask, psmask):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
-    strategy = { gdef.node[i].name: [-1-int(psmask[gi]) if int(ncclmask[gi]) == 0 else int(ncclmask[gi])] + [ int(nodemask[gi, j]) for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
+    strategy = {}
+    for gi, group in enumerate(record["op_groups"]):
+        for node_id in group:
+            s = [-1-int(psmask[gi]) if int(ncclmask[gi]) == 0 else int(ncclmask[gi])]
+            for task_id, task in enumerate(record["topo_spec"].tasks):
+                for index in range(task.number):
+                    s.append(int(nodemask[gi, task_id]))
+            strategy[gdef.node[node_id].name] = s
     # info(strategy)
     leftout = [ gi for gi in range(len(record["op_groups"])) if np.sum(nodemask[gi, :]) == 0 ]
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
             v[1] = 1
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=["Adam"])
+    tge = TGE(gdef, [device for device in record["devices"]], sinks=["Adam"])
     tge.set_strategy(strategy)
     tge.fill_batchsize(record["batchsize"])
     tge.replace_placeholder(record["batchsize"])
-    tge.set_bandwidth(intra=int(record["intra"]), inter=int(record["inter"]))
+    tge.set_topology(*record["topology_for_simulator"])
     tge.set_nccl_model(record["nccl_models"])
     time, mem = tge.evaluate(record["prof_data"])
 
-    oom = [ i for i in range(len(mem)) if mem[i] > record["devices"][i][2] ]
+    oom, i = [], 0
+    for task_id, task in enumerate(record["topo_spec"].tasks):
+        for index in range(task.number):
+            if mem[i] > task.memory:
+                oom.append(i)
+            i = i + 1
     return np.sqrt(time / 1_000_000), oom, leftout
 
 def score(time, oom, leftout):
@@ -40,24 +52,24 @@ def base_strategies(record):
     result = []
 
     ncgroups = len(record['op_groups'])
-    ndevices = len(record['devices'])
+    ntasks = record['topo_spec'].ntasks
 
     # 1: gpu0 + ps
-    s = np.zeros((ncgroups, ndevices), dtype=np.int)
+    s = np.zeros((ncgroups, ntasks), dtype=np.int)
     for i in range(ncgroups):
         s[i, 0] = 1
     result.append((s, [0] * ncgroups, [0] * ncgroups))
 
     # 2: gpu0 + gpu1 + nccl
-    s = np.zeros((ncgroups, ndevices), dtype=np.int)
+    s = np.zeros((ncgroups, ntasks), dtype=np.int)
     for i in range(ncgroups):
         s[i, 0] = 1
         s[i, 1] = 1
     result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     # 3: gpu0 + gpu1 + gpu2 + gpu3 + nccl
-    if ndevices >= 4:
-        s = np.zeros((ncgroups, ndevices), dtype=np.int)
+    if ntasks >= 4:
+        s = np.zeros((ncgroups, ntasks), dtype=np.int)
         for i in range(ncgroups):
             s[i, 0] = 1
             s[i, 1] = 1
@@ -66,16 +78,16 @@ def base_strategies(record):
         result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     # 4. all + ps (round robin)
-    s = np.ones((ncgroups, ndevices), dtype=np.int)
-    result.append((s, [0] * ncgroups, [ i % ndevices for i in range(ncgroups) ]))
+    s = np.ones((ncgroups, ntasks), dtype=np.int)
+    result.append((s, [0] * ncgroups, [ i % ntasks for i in range(ncgroups) ]))
 
     # 5. all + nccl
-    s = np.ones((ncgroups, ndevices), dtype=np.int)
+    s = np.ones((ncgroups, ntasks), dtype=np.int)
     result.append((s, [1] * ncgroups, [0] * ncgroups))
 
     # 6. first 4 * 2 + rest * 1 + nccl
-    if ndevices >= 5:
-        s = np.ones((ncgroups, ndevices), dtype=np.int)
+    if ntasks >= 5:
+        s = np.ones((ncgroups, ntasks), dtype=np.int)
         for i in range(ncgroups):
             s[i, 0] = 2
             s[i, 1] = 2

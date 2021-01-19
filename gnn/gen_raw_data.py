@@ -154,5 +154,5 @@ tf.reset_default_graph()
 opt = model_fn()
 init = tf.global_variables_initializer()
 gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-with open("{}_{}.pickle".format(model_fn.__name__, gtype), 'wb') as f:
-    pickle.dump((gdef, prof_dict, gtype, target_batch_size), f)
+with open("raw_data/{}_{}_{}.pickle".format(model_fn.__name__, gtype, target_batch_size), 'wb') as f:
+    pickle.dump((gdef, prof_dict), f)

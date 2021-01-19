@@ -23,7 +23,8 @@ class NcclProfiler:
         results = {}
 
         for task, devs in self.devices.items():
-            results[','.join(sorted(devs))] = self._model([x for i in range(5) for x in self._profile(devs)])
+            # results[','.join(sorted(devs))] = self._model([x for i in range(5) for x in self._profile(devs)])
+            results[sorted(devs)[0]] = self._model([x for i in range(5) for x in self._profile(devs)])
 
         for tasks in (t for i in range(2, len(self.devices)+1) for t in itertools.combinations(self.devices.keys(), i)):
             devs = [self.devices[t][0] for t in tasks] # the first (alphabet order) device is the leader of the task

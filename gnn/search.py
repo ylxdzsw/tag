@@ -15,11 +15,11 @@ pool = Pool(16)
 class MyProblem(Problem):
     def __init__(self, record):
         self.record = record
-        n = 3 * len(record['op_groups']) * len(record['devices']) + len(record['op_groups']) * (1 + len(record['devices']))
+        n = 3 * len(record['op_groups']) * record['topo_spec'].ntasks + len(record['op_groups']) * (1 + record['topo_spec'].ntasks)
         super().__init__(n_var=n, n_obj=1, n_constr=0, xl=0, xu=1)
 
     def _evaluate(self, x, out, *args, **kwargs):
-        n, m = len(self.record['op_groups']), len(self.record['devices'])
+        n, m = len(self.record['op_groups']), self.record['topo_spec'].ntasks
         phenos = []
         for i in range(x.shape[0]):
             placement = np.argmax(np.reshape(x[i, :n*m*3], (n*m, 3)), axis=1)
@@ -69,8 +69,8 @@ def search(record, placement, n_gen=15):
     return (res.F[0], *decode(record, res.opt.get("pheno")[0]))
 
 def decode(record, pheno):
-    nodemask = np.reshape(pheno[:len(record['op_groups']) * len(record['devices'])], (len(record['op_groups']), len(record['devices'])))
-    ncclmask = (pheno[len(record['op_groups']) * len(record['devices']):] == 0).astype(int)
-    psmask = pheno[len(record['op_groups']) * len(record['devices']):] - 1
+    nodemask = np.reshape(pheno[:len(record['op_groups']) * record['topo_spec'].ntasks], (len(record['op_groups']), record['topo_spec'].ntasks))
+    ncclmask = (pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] == 0).astype(int)
+    psmask = pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] - 1
 
     return nodemask, ncclmask, psmask

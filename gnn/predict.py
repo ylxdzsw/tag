@@ -26,13 +26,13 @@ with tf.device("/gpu:1"):
     record = records[7]
 
     op_feats     = tf.convert_to_tensor(record["op_feats"], dtype=tf.float32)
-    device_feats = tf.convert_to_tensor(record["device_feats"], dtype=tf.float32)
+    task_feats = tf.convert_to_tensor(record["task_feats"], dtype=tf.float32)
     tensor_feats = tf.convert_to_tensor(record["tensor_feats"], dtype=tf.float32)
     link_feats   = tf.convert_to_tensor(record["link_feats"], dtype=tf.float32)
     place_feats  = tf.convert_to_tensor(record["place_feats"], dtype=tf.float32)
     model.set_graph(record["graph"])
 
-    placement_logit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=False)
+    placement_logit = model([op_feats, task_feats, tensor_feats, link_feats, place_feats], training=False)
 
     info(placement_logit)
 
@@ -65,7 +65,7 @@ with tf.device("/gpu:1"):
 
     save(strategy, "strategy.pickle")
 
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=['Adam'])
+    tge = TGE(gdef, [device for device in record["devices"]], sinks=['Adam'])
     tge.set_strategy(strategy)
     tge.fill_batchsize(record['batchsize'])
     tge.replace_placeholder(record['batchsize'])
@@ -74,7 +74,7 @@ with tf.device("/gpu:1"):
     time, mem = tge.evaluate(record["prof_data"], "trace_best.json")
 
     strategy = { gdef.node[i].name: [1] + [ 1 for j in range(nodemask.shape[1]) ] for gi, group in enumerate(record["op_groups"]) for i in group }
-    tge = TGE(gdef, [dev for dev, _, _ in record["devices"]], sinks=['Adam'])
+    tge = TGE(gdef, [device for device in record["devices"]], sinks=['Adam'])
     tge.set_strategy(strategy)
     tge.fill_batchsize(record['batchsize'])
     tge.replace_placeholder(record['batchsize'])

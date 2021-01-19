@@ -47,7 +47,7 @@ with tf.device("/gpu:0"):
             record['elites'] = [best]
 
         op_feats     = tf.convert_to_tensor(record["op_feats"], dtype=tf.float32)
-        device_feats = tf.convert_to_tensor(record["device_feats"], dtype=tf.float32)
+        task_feats   = tf.convert_to_tensor(record["task_feats"], dtype=tf.float32)
         tensor_feats = tf.convert_to_tensor(record["tensor_feats"], dtype=tf.float32)
         link_feats   = tf.convert_to_tensor(record["link_feats"], dtype=tf.float32)
         place_feats  = tf.convert_to_tensor(record["place_feats"], dtype=tf.float32)
@@ -55,7 +55,7 @@ with tf.device("/gpu:0"):
 
         # search
         if epoch > 200 and epoch % 20 == 0:
-            logit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=True)
+            logit = model([op_feats, task_feats, tensor_feats, link_feats, place_feats], training=True)
 
             placement = sample(logit)
             loss_env, nodemask, ncclmask, psmask = search(record, placement)
@@ -69,7 +69,7 @@ with tf.device("/gpu:0"):
         # learn
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
-            logit = model([op_feats, device_feats, tensor_feats, link_feats, place_feats], training=True)
+            logit = model([op_feats, task_feats, tensor_feats, link_feats, place_feats], training=True)
 
             loss = 0
             for loss_env, nodemask, ncclmask, psmask in record['elites']:

@@ -128,8 +128,16 @@ def replication_number_feasibility_rounding(record, nodemask):
 
 def fitness(arg):
     record, pheno = arg
-    nodemask = np.reshape(pheno[:len(record['op_groups']) * len(record['devices'])], (len(record['op_groups']), len(record['devices'])))
-    ncclmask = (pheno[len(record['op_groups']) * len(record['devices']):] == 0).astype(int)
-    psmask = pheno[len(record['op_groups']) * len(record['devices']):] - 1
+    nodemask = np.reshape(pheno[:len(record['op_groups']) * record['topo_spec'].ntasks], (len(record['op_groups']), record['topo_spec'].ntasks))
+    ncclmask = (pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] == 0).astype(int)
+    psmask = pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] - 1
+
+    return score(*evaluate(record, nodemask, ncclmask, psmask))
+
+def quick_fitness(arg):
+    record, pheno = arg
+    nodemask = np.reshape(pheno, (len(record['op_groups']), record['topo_spec'].ntasks))
+    ncclmask = [1] * len(record['op_groups'])
+    psmask = [0] * len(record['op_groups'])
 
     return score(*evaluate(record, nodemask, ncclmask, psmask))

@@ -7,7 +7,7 @@ import pickle
 import math
 import itertools
 import networkx as nx
-from utils import groupby, car, cadr, cdr, info, load
+from utils import groupby, car, cadr, cdr, info, load, parse_input, get_input_size
 
 @dataclass
 class TopoSpec:
@@ -71,7 +71,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
         id_list = group_around_topk_costs(gdef, base_groups, prof_data[topo_spec.tasks[0].gpu_model], n_groups-1) # TODO: use average time in all gpu types? weighted average?
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
-    n_groups = 4 * topo_spec.ntasks # + 10
+    n_groups = 4 * topo_spec.ntasks + 10
     op_groups = group_with_topk_layers(n_groups)
 
     parameter_sizes = np.zeros(n_groups)
@@ -158,7 +158,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
 def get_all_data():
     models = []
-    for m in ("vgg", "resnet", "inception"): # , "transformer", "bert" "mobilenet", "nasnet"
+    for m in ("vgg", "resnet", "inception", "transformer", "bert"): # ,  "mobilenet", "nasnet"
         agg_prof_data = {}
         gdef, batchsize = None, None
         for gtype in ('1080ti', 'v100'):
@@ -242,33 +242,6 @@ def k_spanning_tree(g, weights, k, seed=0):
             groups.append([node])
 
     return groups
-
-def parse_input(input):
-    if input[0] == '^':
-        node = input[1:]
-        input_index = 0
-    else:
-        node = input.split(':')[0]
-        try:
-            input_index = int(input.split(':')[1])
-        except:
-            input_index = 0
-    return node, input_index
-
-def get_input_size(nodedef, input_index, batchsize):
-    try:
-        shape = [ dim.size for dim in nodedef.attr["_output_shapes"].list.shape[input_index].dim ]
-        if len(shape) > 0 and shape[0] == -1:
-            shape[0] = batchsize
-        tensorsize = 1
-        for size in shape:
-            if size == -1:
-                tensorsize = 0
-                break
-            tensorsize *= size
-        return tensorsize
-    except:
-        return 0
 
 def gen_nccl_model(topo_spec: TopoSpec):
     # TGE automatically use only the leader (first device) to determin the nccl model to use when no exact model present

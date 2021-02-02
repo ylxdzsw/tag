@@ -13,7 +13,7 @@ def sample(logit, e=0):
             return int(np.random.rand() < x)
     return np.vectorize(f)(p)
 
-def evaluate(record, nodemask, ncclmask, psmask):
+def evaluate_with_feedback(record, nodemask, ncclmask, psmask):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
     strategy = {}

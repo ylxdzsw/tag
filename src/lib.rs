@@ -163,14 +163,18 @@ unsafe extern fn heft_control(target: *mut Target, profiler: *const DataProfiler
 
 #[no_mangle]
 unsafe extern fn evaluate(target: *mut Target, profiler: *const DataProfiler, trace_path: *const u8, trace_len: u32, memory: *mut u64) -> u64 {
-    let simulator = simulator::SimpleSimulator;
-    let tracer = if trace_len == 0 {
-        None
-    } else {
-        Some(std::str::from_utf8(std::slice::from_raw_parts(trace_path, trace_len as usize)).unwrap())
-    };
+    let target = reclaim(target);
+    let mut simulator = simulator::SimpleSimulator::new(&target);
+    simulator.simulate(&*profiler, *target);
+    for (i, m) in simulator.get_peak_memories().iter().enumerate() {
+        core::ptr::write(memory.offset(i as _), *m)
+    }
 
-    simulator.evaluate(&*profiler, *reclaim(target), tracer.map(|x| std::fs::File::create(x).unwrap()).as_mut(), std::slice::from_raw_parts_mut(memory, (*target).devices.len()))
+    if trace_len > 0 {
+        simulator.write_chrome(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(trace_path, trace_len as _)).unwrap()).unwrap())
+    }
+
+    simulator.get_total_time()
 }
 
 #[no_mangle]

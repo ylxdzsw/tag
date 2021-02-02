@@ -1,5 +1,5 @@
 use oh_my_rust::*;
-use std::convert::TryInto;
+use std::{convert::TryInto, fmt::Write};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex};
 use std::cmp;
@@ -16,8 +16,11 @@ pub const GRPC_LATENCY: u64 = 12;
 pub const FALLBACK_NCCL_MODEL: [f64; 4] = [0.043420241077615454, 368.2013618677043, 0.27766802543921265, 211.91926070037152];
 
 pub trait Simulator {
-    /// `memory` should be already zero-initialized and be at least as long as target.device
-    fn evaluate<W: std::io::Write>(&self, profiler: &impl Profiler, target: Target, trace: Option<&mut W>, memory: &mut [u64]) -> u64;
+    fn new(target: &Target) -> Self;
+    fn simulate(&mut self, profiler: &impl Profiler, target: Target);
+    fn get_total_time(&self) -> u64;
+    fn get_peak_memories(&self) -> &[u64];
+    fn write_chrome<W: std::io::Write>(&self, output: &mut W);
 }
 
 #[derive(Debug, Default)]
@@ -27,25 +30,27 @@ struct CollectiveGroup {
 }
 
 #[derive(Debug)]
-enum TaskType<'a> {
+enum TaskType {
     Computation { id: usize, gpu: usize },
-    Transfer { size: u64, path: &'a [usize] },
+    Transfer { size: u64, path: Box<[usize]> },
     Collective { instance_key: usize, group_key: usize, size: u64 }
 }
 
 #[derive(Debug)]
-struct Task<'a> {
-    pub content: TaskType<'a>,
+struct Task {
+    pub content: TaskType,
     pub wait_for: Vec<usize>,
     pub notify: Vec<usize>,
     pub in_tensors: Vec<TensorBuf>, // note: in_tensors might be less than wait_for because of control dependencies
     pub out_tensors: Vec<TensorBuf>,
-    pub eft: u64
+
+    pub eft: u64,
+    pub duration: u64
 }
 
-impl<'a> Task<'a> {
-    fn create(list: &mut Vec<Task<'a>>, content: TaskType<'a>, wait_for: &[usize], in_tensors: Vec<TensorBuf>, out_tensors: Vec<TensorBuf>) -> usize {
-        let task = Task { content, wait_for: wait_for.to_vec(), in_tensors, out_tensors, notify: vec![], eft: 0 };
+impl Task {
+    fn create(list: &mut Vec<Task>, content: TaskType, wait_for: &[usize], in_tensors: Vec<TensorBuf>, out_tensors: Vec<TensorBuf>) -> usize {
+        let task = Task { content, wait_for: wait_for.to_vec(), in_tensors, out_tensors, notify: vec![], eft: 0, duration: 0 };
         let id = list.len();
         for i in wait_for {
             list[*i].notify.push(id);
@@ -77,15 +82,25 @@ type TensorBuf = (usize, usize, usize); // id, index, gpu
 // consume memory when the activate op is finished, and deactivate when all deactivate ops are done
 // TODO: ensure every tensor being transferred, even if the path is empty
 
-pub struct SimpleSimulator;
+#[derive(Debug, Default)]
+pub struct SimpleSimulator {
+    max_memory: Box<[u64]>,
+    tasks: Vec<Task>,
+    task_dict: Vec<usize>, // the i-th element is the computation task of the i-th node
+    tensorbufs: BTreeMap::<TensorBuf, (u64, usize, bool)>, // TensorBuf -> (size, ref count, activated)
+    total_time: u64
+}
 
 impl Simulator for SimpleSimulator {
-    fn evaluate<W: std::io::Write>(&self, profiler: &impl Profiler, mut target: Target, mut tracer: Option<&mut W>, max_memory: &mut [u64]) -> u64 {
-        task!("evaluating graph of {} nodes...", target.pb.node.len());
-
-        if let Some(tracer) = &mut tracer { // initialize tracing
-            write!(tracer, "[").unwrap();
+    fn new(target: &Target) -> Self {
+        Self {
+            max_memory: vec![0; target.ndev()].into_boxed_slice(),
+            ..Default::default()
         }
+    }
+
+    fn simulate(&mut self, profiler: &impl Profiler, mut target: Target) {
+        task!("evaluating graph of {} nodes...", target.pb.node.len());
 
         let nodes = sort_nodes(std::mem::replace(&mut target.pb.node, vec![].into()).into_vec());
         let node_dict: HashMap<_, _> = nodes.iter().enumerate().map(|(i, x)| (&x.name[..], i)).collect();
@@ -93,9 +108,9 @@ impl Simulator for SimpleSimulator {
         let collective_groups = analyze_collective_groups(&nodes, &device_dict, &target.nccls);
 
         // build tasks
-        let mut tasks: Vec<Task> = vec![];
-        let mut task_dict: Vec<usize> = vec![]; // the i-th element is the computation task of the i-th node
-        let mut tensorbufs = BTreeMap::<_, (u64, usize, bool)>::new(); // TensorBuf -> (size, ref count, activated)
+        let tasks = &mut self.tasks;
+        let task_dict = &mut self.task_dict;
+        let tensorbufs = &mut self.tensorbufs;
         for (i, node) in nodes.iter().enumerate() {
             let mut in_tensors = vec![];
             let wait_for: Vec<_> = node.input.iter().enumerate().map(|(input_index_of_this_node, input)| {
@@ -118,8 +133,8 @@ impl Simulator for SimpleSimulator {
                 in_tensors.push((input_id, index, to));
 
                 // note for memory calculation when from == to: we ignore activation of tensorbuf when it is already activated, and count ref for every transfer, so the calculation is correct.
-                Task::create(&mut tasks, TaskType::Transfer {
-                    size, path: &target.paths[from * target.devices.len() + to]
+                Task::create(tasks, TaskType::Transfer {
+                    size, path: target.paths[from * target.devices.len() + to].clone()
                 }, &[task_dict[input_id]], vec![(input_id, index, from)], vec![(input_id, index, to)])
             }).collect();
 
@@ -127,9 +142,9 @@ impl Simulator for SimpleSimulator {
                 let instance_key = node.attr["instance_key"].get_i() as _;
                 let group_key = node.attr["group_key"].get_i() as _;
                 let size = node.attr.get("_tge_input_sizes").and_then(|x| x.get_list().i.get(0)).copied().unwrap_or(0) as _;
-                Task::create(&mut tasks, TaskType::Collective { instance_key, group_key, size }, &wait_for, in_tensors, vec![])
+                Task::create(tasks, TaskType::Collective { instance_key, group_key, size }, &wait_for, in_tensors, vec![])
             } else {
-                Task::create(&mut tasks, TaskType::Computation { id: i, gpu: device_dict[&node.device[..]] }, &wait_for, in_tensors, vec![])
+                Task::create(tasks, TaskType::Computation { id: i, gpu: device_dict[&node.device[..]] }, &wait_for, in_tensors, vec![])
             };
             task_dict.push(id);
         }
@@ -139,23 +154,24 @@ impl Simulator for SimpleSimulator {
         let mut ready_list: VecDeque<_> = tasks.iter().enumerate().filter(|(_, task)| task.wait_for.is_empty()).map(|(i, _)| i).collect();
         let mut gpu_available_time = vec![0; target.devices.len()];
         let mut link_available_time = vec![0; target.links.len()];
-        let mut current_memory = max_memory.to_vec();
+        let mut current_memory = vec![0; target.devices.len()];
         let mut collective_state: BTreeMap<usize, Vec<usize>> = BTreeMap::new(); // instance_key => [ready task_id]
         let mut collective_available_time = 0;
 
         loop {
             // schedule ready tasks. Note the scheduled task may or may not start immediately depending on the GPU/link queue. There may be other tasks become ready before some tasks schedualed earlier actually start.
             while let Some(task_id) = ready_list.pop_front() {
-                let task = &tasks[task_id];
-                match task.content {
+                let task = &mut tasks[task_id];
+                match &task.content {
                     TaskType::Computation { id: node_id, gpu } => {
-                        debug!("{:?} {:?} {:?} {:?} {:?}", gpu, gpu_available_time[gpu], time, nodes[node_id].name, profiler.profile(&nodes[node_id], gpu).unwrap_or(0));
-                        let eft = cmp::max(gpu_available_time[gpu], time) + profiler.profile(&nodes[node_id], gpu).unwrap_or(0);
-                        gpu_available_time[gpu] = eft;
-                        ongoing_tasks.push(OngoingTask { id: task_id, eft });
+                        debug!("{:?} {:?} {:?} {:?} {:?}", gpu, gpu_available_time[*gpu], time, nodes[*node_id].name, profiler.profile(&nodes[*node_id], *gpu).unwrap_or(0));
+                        task.duration = profiler.profile(&nodes[*node_id], *gpu).unwrap_or(0);
+                        task.eft = cmp::max(gpu_available_time[*gpu], time) + task.duration;
+                        gpu_available_time[*gpu] = task.eft;
+                        ongoing_tasks.push(OngoingTask { id: task_id, eft: task.eft });
                     }
                     TaskType::Collective { instance_key, group_key, size } => {
-                        let ready_list = collective_state.entry(instance_key).or_default();
+                        let ready_list = collective_state.entry(*instance_key).or_default();
                         let group = &collective_groups[&group_key];
                         ready_list.push(task_id);
                         if ready_list.len() == group.devices.len() { // all ready
@@ -165,61 +181,34 @@ impl Simulator for SimpleSimulator {
                             // for gpu in group.devices.iter() {
                             //     gpu_available_time[*gpu] = eft;
                             // }
-                            let eft = cmp::max(time, collective_available_time) + nccl_time(size, &collective_groups[&group_key].model);
-                            collective_available_time = eft;
+                            task.duration = nccl_time(*size, &collective_groups[&group_key].model);
+                            task.eft = cmp::max(time, collective_available_time) + task.duration;
+                            collective_available_time = task.eft;
                             for task_id in ready_list {
-                                ongoing_tasks.push(OngoingTask { id: *task_id, eft })
+                                ongoing_tasks.push(OngoingTask { id: *task_id, eft: task.eft })
                             }
                         }
                     }
                     TaskType::Transfer { size, path } => {
                         let est = path.iter().fold(time, |max, link| cmp::max(max, link_available_time[*link]));
-                        let eft = est + if !path.is_empty() {
+                        task.duration = if !path.is_empty() {
                             let bandwidth = path.iter().fold(std::u64::MAX, |min, link| cmp::min(min, target.links[*link]));
                             size / bandwidth + GRPC_LATENCY
                         } else {
                             0
                         };
+                        task.eft = est + task.duration;
 
-                        for link in path {
-                            link_available_time[*link] = eft
+                        for link in path.iter() {
+                            link_available_time[*link] = task.eft
                         }
-                        ongoing_tasks.push(OngoingTask { id: task_id, eft });
+                        ongoing_tasks.push(OngoingTask { id: task_id, eft: task.eft });
                     }
                 }
             }
 
             // move a time step forward
             if let Some(OngoingTask { id, eft }) = ongoing_tasks.pop() {
-                // print tracing information
-                if let Some(tracer) = &mut tracer {
-                    match &tasks[id].content {
-                        TaskType::Computation { id: node_id, gpu } => {
-                            let duration = profiler.profile(&nodes[*node_id], *gpu).unwrap_or(0);
-                            if duration != 0 {
-                                writeln!(tracer, "{{ \"name\": \"{}\", \"cat\": \"computation\", \"ph\": \"B\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", nodes[*node_id].name, eft - duration, gpu).expect("fail to write log");
-                                writeln!(tracer, "{{ \"name\": \"{}\", \"cat\": \"computation\", \"ph\": \"E\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", nodes[*node_id].name, eft, gpu).expect("fail to write log");
-                            }
-                        }
-                        TaskType::Collective { instance_key, group_key, size } => {
-                            let duration = nccl_time(*size, &collective_groups[group_key].model);
-                            let gpu = tasks[id].in_tensors[0].2; // hack
-                            if duration != 0 {
-                                writeln!(tracer, "{{ \"name\": \"collective_{}\", \"cat\": \"collective\", \"ph\": \"B\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", instance_key, eft - duration, gpu).expect("fail to write log");
-                                writeln!(tracer, "{{ \"name\": \"collective_{}\", \"cat\": \"collective\", \"ph\": \"E\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", instance_key, eft, gpu).expect("fail to write log");
-                            }
-                        }
-                        TaskType::Transfer { size, path } => if !path.is_empty() {
-                            let bandwidth = path.iter().fold(std::u64::MAX, |min, link| cmp::min(min, target.links[*link]));
-                            let duration = size / bandwidth + GRPC_LATENCY;
-                            for link in *path {
-                                writeln!(tracer, "{{ \"name\": \"transfer{}\", \"cat\": \"transfer\", \"ph\": \"B\", \"ts\": {}, \"pid\": 1, \"tid\": {} }},", id, eft - duration, link).expect("fail to write log");
-                                writeln!(tracer, "{{ \"name\": \"transfer{}\", \"cat\": \"transfer\", \"ph\": \"E\", \"ts\": {}, \"pid\": 1, \"tid\": {} }},", id, eft, link).expect("fail to write log");
-                            }
-                        }
-                    }
-                };
-
                 // remove used tensorbufs
                 for in_tensor in &tasks[id].in_tensors {
                     let tensor_buf = tensorbufs.get_mut(in_tensor);
@@ -250,7 +239,7 @@ impl Simulator for SimpleSimulator {
                         let gpu = out_tensor.2;
                         current_memory[gpu] += *size;
                         debug!("memory of {}:{} {} {} +{} {}", nodes[out_tensor.0].name, out_tensor.1, out_tensor.2, time, *size, current_memory[out_tensor.2]);
-                        max_memory[gpu] = cmp::max(current_memory[gpu], max_memory[gpu]);
+                        self.max_memory[gpu] = cmp::max(current_memory[gpu], self.max_memory[gpu]);
                     }
                 }
 
@@ -267,12 +256,46 @@ impl Simulator for SimpleSimulator {
             }
         }
 
-        time
+        self.total_time = time
+    }
+
+
+    fn get_total_time(&self) -> u64 {
+        self.total_time
+    }
+
+    fn get_peak_memories(&self) -> &[u64] {
+        &self.max_memory[..]
+    }
+
+    fn write_chrome<W: std::io::Write>(&self, output: &mut W) {
+        write!(output, "[").unwrap();
+
+        for (id, task) in self.tasks.iter().enumerate() {
+            match &task.content {
+                TaskType::Computation { id: node_id, gpu } => {
+                    if task.duration != 0 {
+                        writeln!(output, "{{ \"name\": \"computation_{}\", \"cat\": \"computation\", \"ph\": \"B\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", node_id, task.eft - task.duration, gpu).expect("fail to write log");
+                        writeln!(output, "{{ \"name\": \"computation_{}\", \"cat\": \"computation\", \"ph\": \"E\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", node_id, task.eft, gpu).expect("fail to write log");
+                    }
+                }
+                TaskType::Collective { instance_key, .. } => {
+                    let gpu = task.in_tensors[0].2; // hack
+                    if task.duration != 0 {
+                        writeln!(output, "{{ \"name\": \"collective_{}\", \"cat\": \"collective\", \"ph\": \"B\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", instance_key, task.eft - task.duration, gpu).expect("fail to write log");
+                        writeln!(output, "{{ \"name\": \"collective_{}\", \"cat\": \"collective\", \"ph\": \"E\", \"ts\": {}, \"pid\": 0, \"tid\": {} }},", instance_key, task.eft, gpu).expect("fail to write log");
+                    }
+                }
+                TaskType::Transfer { path, .. } => if !path.is_empty() {
+                    for link in path.iter() {
+                        writeln!(output, "{{ \"name\": \"transfer_{}\", \"cat\": \"transfer\", \"ph\": \"B\", \"ts\": {}, \"pid\": 1, \"tid\": {} }},", id, task.eft - task.duration, link).expect("fail to write log");
+                        writeln!(output, "{{ \"name\": \"transfer_{}\", \"cat\": \"transfer\", \"ph\": \"E\", \"ts\": {}, \"pid\": 1, \"tid\": {} }},", id, task.eft, link).expect("fail to write log");
+                    }
+                }
+            }
+        }
     }
 }
-
-// use crossbeam_channel;
-// include!("../deprecated/multithreaded_simulator.rs");
 
 fn parse_input(x: &str) -> (&str, usize) {
     match x.find(':') {

@@ -89,7 +89,22 @@ import tge
 strategy = { node.name: [1, 2, 1] for node in gdef.node }
 
 import pickle
-prof_dict = pickle.load(open("dump", 'rb'))
+
+try:
+    prof_dict = pickle.load(open("prof_cache", 'wb'))
+except:
+    from profiler import Profiler
+    prof_dict = {}
+    for nrep in (1, 2, 3, 4,):# 6, 8, 12):
+        tf.reset_default_graph()
+        opt = model_fn()
+        init = tf.global_variables_initializer()
+        gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
+        p = Profiler(gdef, BATCHSIZE // nrep, server.target)
+        for node in gdef.node:
+            prof_dict[(node.name, nrep)] = [ p.profile(node.name, device) for device in devices ]
+
+    pickle.dump(prof_dict, open("prof_cache", 'wb'))
 
 g = (tge.TGE(gdef, devices)
     .custom(strategy)
@@ -136,20 +151,6 @@ tic = time.perf_counter()
 sess.run(opt)
 toc = time.perf_counter()
 
-# from profiler import Profiler
-# prof_dict = {}
-# for nrep in (1, 2, 3, 4,):# 6, 8, 12):
-#     tf.reset_default_graph()
-#     opt = model_fn()
-#     init = tf.global_variables_initializer()
-#     gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-#     p = Profiler(gdef, BATCHSIZE // nrep, server.target)
-#     for node in gdef.node:
-#         prof_dict[(node.name, nrep)] = [ p.profile(node.name, device) for device in devices ]
-
-# import pickle
-# pickle.dump(prof_dict, open("dump", 'wb'))
-
 # from profiler import NcclProfiler
 # nccl_model = NcclProfiler(devices, server.target).profile()
 
@@ -166,5 +167,5 @@ g = (tge.TGE(gdef, devices)
 )
 
 print("actual: {}".format(toc - tic))
-print("simulated: {}".format(g[0]))
-print("memory: {}".format(g[1]))
+print("simulated: {}".format(g[0] / 1_000_000))
+print("memory: {}".format([ x / 2**30 for x in g[1]]))

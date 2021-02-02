@@ -74,6 +74,15 @@ except:
     save(records, "records")
 
 for record_id, record in enumerate(records):
+    if 'reference' not in record:
+        record['reference'] = []
+        for nodemask, ncclmask, psmask in base_strategies(record):
+            loss_env = score(*evaluate(record, nodemask, ncclmask, psmask))
+            record['reference'].append((loss_env, nodemask, ncclmask, psmask))
+        save(records, "records")
+    info([x[0] for x in record['reference']])
+
+for record_id, record in enumerate(records):
     if (record_id % 8) not in (0, 2, 4):
         continue
     if 'reference' not in record:

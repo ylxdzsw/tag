@@ -1,4 +1,5 @@
 use oh_my_rust::*;
+use serde_json::json;
 use std::{convert::TryInto, fmt::Write};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ pub trait Simulator {
     fn get_total_time(&self) -> u64;
     fn get_peak_memories(&self) -> &[u64];
     fn write_chrome<W: std::io::Write>(&self, output: &mut W);
+    fn dump_records<W: std::io::Write>(&self, output: &mut W);
 }
 
 #[derive(Debug, Default)]
@@ -84,6 +86,7 @@ type TensorBuf = (usize, usize, usize); // id, index, gpu
 
 #[derive(Debug, Default)]
 pub struct SimpleSimulator {
+    target: Target,
     max_memory: Box<[u64]>,
     tasks: Vec<Task>,
     task_dict: Vec<usize>, // the i-th element is the computation task of the i-th node
@@ -102,7 +105,11 @@ impl Simulator for SimpleSimulator {
     fn simulate(&mut self, profiler: &impl Profiler, mut target: Target) {
         task!("evaluating graph of {} nodes...", target.pb.node.len());
 
-        let nodes = sort_nodes(std::mem::replace(&mut target.pb.node, vec![].into()).into_vec());
+        target.pb.node = sort_nodes(std::mem::take(&mut target.pb.node).into_vec()).into();
+        self.target = target;
+        let target = &self.target;
+        let nodes = &target.pb.node;
+
         let node_dict: HashMap<_, _> = nodes.iter().enumerate().map(|(i, x)| (&x.name[..], i)).collect();
         let device_dict: BTreeMap<_, _> = target.devices.iter().enumerate().map(|(i, x)| (&x[..], i)).collect();
         let collective_groups = analyze_collective_groups(&nodes, &device_dict, &target.nccls);
@@ -152,9 +159,9 @@ impl Simulator for SimpleSimulator {
         let mut time = 0;
         let mut ongoing_tasks = BinaryHeap::new();
         let mut ready_list: VecDeque<_> = tasks.iter().enumerate().filter(|(_, task)| task.wait_for.is_empty()).map(|(i, _)| i).collect();
-        let mut gpu_available_time = vec![0; target.devices.len()];
+        let mut gpu_available_time = vec![0; target.ndev()];
         let mut link_available_time = vec![0; target.links.len()];
-        let mut current_memory = vec![0; target.devices.len()];
+        let mut current_memory = vec![0; target.ndev()];
         let mut collective_state: BTreeMap<usize, Vec<usize>> = BTreeMap::new(); // instance_key => [ready task_id]
         let mut collective_available_time = 0;
 
@@ -294,6 +301,22 @@ impl Simulator for SimpleSimulator {
                 }
             }
         }
+    }
+
+    fn dump_records<W: std::io::Write>(&self, output: &mut W) {
+        let mut device_busy_time = vec![0; self.target.ndev()]; // note that each device can only run a single node at a time, so the busy time is simply the sum of all computation nodes
+        for task in self.tasks.iter() {
+            if let TaskType::Computation { gpu, .. } = &task.content {
+                device_busy_time[*gpu] += task.duration
+            }
+        }
+
+        let device_peak_memory = self.max_memory.clone();
+
+        serde_json::to_writer(output, &json!({
+            "device_busy_time": device_busy_time,
+            "device_peak_memory": device_peak_memory
+        })).expect("fail to write log");
     }
 }
 

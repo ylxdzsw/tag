@@ -50,7 +50,7 @@ libtge.heft_rank.restype = None
 libtge.heft_control.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 libtge.heft_control.restype = None
 
-libtge.evaluate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
+libtge.evaluate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_uint32, ctypes.POINTER(ctypes.c_char), ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
 libtge.evaluate.restype = ctypes.c_uint64
 
 libtge.remove_collocation_hint.argtypes = [ctypes.c_void_p]
@@ -138,16 +138,17 @@ class TGE:
         else:
             libtge.heft_rank(self.target, self.profiler)
 
-    def evaluate(self, profile_dict, trace_path=""):
+    def evaluate(self, profile_dict, chrome_path="", dump_path=""):
         if not self.compiled: # for backward compatibility
             self.compile()
         self.remove_dangling_nodes()
 
-        trace_path = trace_path.encode('ascii')
+        chrome_path = chrome_path.encode('ascii')
+        dump_path = dump_path.encode('ascii')
         memory = (ctypes.c_uint64 * len(self.devices))(*(0 for x in self.devices))
         self._create_profiler(profile_dict)
-        result = libtge.evaluate(self.target, self.profiler, trace_path, len(trace_path), memory)
-        self.target = None # evaluator now takes the ownership of target
+        result = libtge.evaluate(self.target, self.profiler, chrome_path, len(chrome_path), dump_path, len(dump_path), memory)
+        self.target = None # evaluator takes the ownership of target for performance
 
         return result, list(memory)
 

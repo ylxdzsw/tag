@@ -162,7 +162,12 @@ unsafe extern fn heft_control(target: *mut Target, profiler: *const DataProfiler
 }
 
 #[no_mangle]
-unsafe extern fn evaluate(target: *mut Target, profiler: *const DataProfiler, trace_path: *const u8, trace_len: u32, memory: *mut u64) -> u64 {
+unsafe extern fn evaluate(
+    target: *mut Target, profiler: *const DataProfiler,
+    chrome_path: *const u8, chrome_len: u32,
+    dump_path: *const u8, dump_len: u32,
+    memory: *mut u64
+) -> u64 {
     let target = reclaim(target);
     let mut simulator = simulator::SimpleSimulator::new(&target);
     simulator.simulate(&*profiler, *target);
@@ -170,8 +175,12 @@ unsafe extern fn evaluate(target: *mut Target, profiler: *const DataProfiler, tr
         core::ptr::write(memory.offset(i as _), *m)
     }
 
-    if trace_len > 0 {
-        simulator.write_chrome(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(trace_path, trace_len as _)).unwrap()).unwrap())
+    if chrome_len > 0 {
+        simulator.write_chrome(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(chrome_path, chrome_len as _)).unwrap()).unwrap())
+    }
+
+    if dump_len > 0 {
+        simulator.dump_records(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(dump_path, dump_len as _)).unwrap()).unwrap())
     }
 
     simulator.get_total_time()

@@ -2,6 +2,7 @@ use crate::graph::Form;
 use crate::proto::{graph::GraphDef, node_def::NodeDef, attr_value::AttrValue, types::DataType};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Default)]
 pub struct Target {
     pub pb: GraphDef,
     pub devices: Box<[String]>,

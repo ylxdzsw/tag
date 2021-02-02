@@ -91,7 +91,7 @@ strategy = { node.name: [1, 2, 1] for node in gdef.node }
 import pickle
 
 try:
-    prof_dict = pickle.load(open("prof_cache", 'wb'))
+    prof_dict = pickle.load(open("prof_cache", 'rb'))
 except:
     from profiler import Profiler
     prof_dict = {}
@@ -163,7 +163,7 @@ g = (tge.TGE(gdef, devices)
     .set_bandwidth(intra=2810, inter=2810)
     .heft(prof_dict)
     # .set_nccl_model(nccl_model)
-    .evaluate(prof_dict, "simulated.json")
+    .evaluate(prof_dict, "simulated.json", "dump.json")
 )
 
 print("actual: {}".format(toc - tic))

@@ -3,8 +3,11 @@ from utils import car, cadr, cdr, info
 from metis import metis
 import numpy as np
 import tensorflow as tf
+import tempfile
+import os
+import json
 
-def sample(logit, e=0):
+def sample_logits(logit, e=0):
     p = tf.math.sigmoid(logit)
     def f(x):
         if np.random.rand() < e:
@@ -13,98 +16,59 @@ def sample(logit, e=0):
             return int(np.random.rand() < x)
     return np.vectorize(f)(p)
 
-def evaluate_with_feedback(record, nodemask, ncclmask, psmask):
+def sample_and_evaluate_with_feedback(pack):
+    record, nodelogit, nccllogit = pack
+    nodemask = sample_logits(nodelogit)
+    ncclmask = sample_logits(nccllogit)
+    return (nodemask, ncclmask, *evaluate_with_feedback(record, nodemask, ncclmask, None))
+
+def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=False):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
     strategy = {}
-    for gi, group in enumerate(record["op_groups"]):
-        if ncclmask[gi] == 2: # metis model parallel
-            device_ids = []
-            i = 0
-            for task_id, task in enumerate(record["topo_spec"].tasks):
-                for index in range(task.number):
-                    if int(nodemask[gi, task_id]) > 0:
-                        device_ids.append(i)
-                    i += 1
-            _, assignments = metis(record["gdef"], {}, len(device_ids), group, record["batchsize"])
-            for node_id, assignment in zip(group, assignments):
-                s = [0] * (1 + len(record["devices"]))
-                s[assignment+1] = 1
-                strategy[gdef.node[node_id].name] = s
-        else:
-            for node_id in group:
-                s = [-1-int(psmask[gi]) if int(ncclmask[gi]) == 0 else int(ncclmask[gi])]
-                for task_id, task in enumerate(record["topo_spec"].tasks):
-                    for index in range(task.number):
-                        s.append(int(nodemask[gi, task_id]))
-                strategy[gdef.node[node_id].name] = s
+    for node_id in range(len(gdef.node)):
+        s = [0 if int(ncclmask[node_id]) == 0 else int(ncclmask[node_id])]
+        for i in range(nodemask.shape[1]):
+            s.append(int(nodemask[node_id, i]))
+        strategy[gdef.node[node_id].name] = s
     # info(strategy)
-    leftout = [ gi for gi in range(len(record["op_groups"])) if np.sum(nodemask[gi, :]) == 0 ]
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
             v[1] = 1
-    tge = TGE(gdef, [device for device in record["devices"]], sinks=["Adam"])
+    tge = TGE(gdef, [device for device, _ in record["devices"]], sinks=["Adam"])
     tge.set_strategy(strategy)
     tge.fill_batchsize(record["batchsize"])
     tge.replace_placeholder(record["batchsize"])
     tge.set_topology(*record["topology_for_simulator"])
     tge.set_nccl_model(record["nccl_models"])
-    time, mem = tge.evaluate(record["prof_data"])
 
-    oom, i = [], 0
-    for task_id, task in enumerate(record["topo_spec"].tasks):
-        for index in range(task.number):
-            if mem[i] > task.memory:
-                oom.append(i)
-            i = i + 1
-    return np.sqrt(time / 1_000_000), oom, leftout
+    if trace:
+        chrome_path = "trace.json"
+    else:
+        chrome_path = ""
 
-def score(time, oom, leftout):
-    nerror = len(oom) + len(leftout)
-    return time * (1 + 10 * nerror)
+    temp_path = tempfile.mktemp()
+    time, mem = tge.evaluate(record["prof_data"], chrome_path=chrome_path, dump_path=temp_path)
+    feedback = parse_feedback(temp_path)
+    feedback["peak_memory"] = mem
+    feedback["leftout"] = list((np.sum(nodemask, axis=1) == 0).astype(int))
+    os.remove(temp_path)
 
-def base_strategies(record):
-    result = []
+    return score(record, time, feedback), feedback
 
-    ncgroups = len(record['op_groups'])
-    ntasks = record['topo_spec'].ntasks
+def parse_feedback(temp_path):
+    raw = json.load(open(temp_path, "r"))
+    return raw
 
-    # 1: task0
-    s = np.zeros((ncgroups, ntasks), dtype=np.int)
-    for i in range(ncgroups):
-        s[i, 0] = 1
-    result.append((s, [0] * ncgroups, [0] * ncgroups))
+def invalidity(record, feedback): # 0 means valid
+    oom = 0
+    for peak_memory, (_, task_id) in zip(feedback["peak_memory"], record["devices"]):
+        if peak_memory > record["topo_spec"].tasks[task_id].memory:
+            oom += 1
+    return oom + sum(feedback["leftout"])
 
-    # 2: task0 + task1 + nccl
-    s = np.zeros((ncgroups, ntasks), dtype=np.int)
-    for i in range(ncgroups):
-        s[i, 0] = 1
-        s[i, 1] = 1
-    result.append((s, [1] * ncgroups, [0] * ncgroups))
-
-    # 3: task0 + task1 + task2 + task3 + nccl
-    if ntasks >= 4:
-        s = np.zeros((ncgroups, ntasks), dtype=np.int)
-        for i in range(ncgroups):
-            s[i, 0] = 1
-            s[i, 1] = 1
-            s[i, 2] = 1
-            s[i, 3] = 1
-        result.append((s, [1] * ncgroups, [0] * ncgroups))
-
-    # 4. all + ps (round robin)
-    s = np.ones((ncgroups, ntasks), dtype=np.int)
-    result.append((s, [0] * ncgroups, [ i % ntasks for i in range(ncgroups) ]))
-
-    # 5. all + nccl
-    s = np.ones((ncgroups, ntasks), dtype=np.int)
-    result.append((s, [1] * ncgroups, [0] * ncgroups))
-
-    # 6. all + metis
-    s = np.ones((ncgroups, ntasks), dtype=np.int)
-    result.append((s, [2] * ncgroups, [0] * ncgroups))
-
-    return result
+def score(record, time, feedback):
+    return np.sqrt(time / 1_000_000) * (1 + 10 * invalidity(record, feedback))
 
 def replication_number_feasibility_rounding(record, nodemask):
     B = record["batchsize"]
@@ -134,19 +98,3 @@ def replication_number_feasibility_rounding(record, nodemask):
         nodemask[i, j] += a
 
     return nodemask
-
-def fitness(arg):
-    record, pheno = arg
-    nodemask = np.reshape(pheno[:len(record['op_groups']) * record['topo_spec'].ntasks], (len(record['op_groups']), record['topo_spec'].ntasks))
-    ncclmask = (pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] == 0).astype(int)
-    psmask = pheno[len(record['op_groups']) * record['topo_spec'].ntasks:] - 1
-
-    return score(*evaluate(record, nodemask, ncclmask, psmask))
-
-def quick_fitness(arg):
-    record, pheno = arg
-    nodemask = np.reshape(pheno, (len(record['op_groups']), record['topo_spec'].ntasks))
-    ncclmask = [1] * len(record['op_groups'])
-    psmask = [0] * len(record['op_groups'])
-
-    return score(*evaluate(record, nodemask, ncclmask, psmask))

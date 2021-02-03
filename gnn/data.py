@@ -99,14 +99,14 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             tensorsize = get_input_size(gdef.node[nodeid], input_index, batchsize)
             tensor_sizes[(thisgroupid, groupid)] += tensorsize / 100_000_000
             if node.op.startswith('Apply') and input_index == 0: # this input is a variable tensor
-                parameter_sizes[groupid] = tensorsize / 100_000_000
+                parameter_sizes[groupid] += tensorsize / 100_000_000
         for task_id, task in enumerate(topo_spec.tasks):
             computation_times[thisgroupid, task_id, 0] += prof_data[task.gpu_model][(node.name, 1)][0] / 10_000
             computation_times[thisgroupid, task_id, 1] += prof_data[task.gpu_model][(node.name, 2)][0] / 10_000
             computation_times[thisgroupid, task_id, 2] += prof_data[task.gpu_model][(node.name, 4)][0] / 10_000
             computation_times[thisgroupid, task_id, 3] += prof_data[task.gpu_model][(node.name, 8)][0] / 10_000
 
-    op_feats = [[np.mean(computation_times[i, :, x]) for x in range(4)] + parameter_sizes[i] + tensor_sizes[i, i] for i in range(n_groups)]
+    op_feats = [[np.mean(computation_times[i, :, x]) for x in range(4)] + [parameter_sizes[i], tensor_sizes[i, i]] for i in range(n_groups)]
     tensor_feats = []
     place_feats = []
     edge_prev = ([], [])

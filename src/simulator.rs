@@ -311,10 +311,13 @@ impl Simulator for SimpleSimulator {
             }
         }
 
+        let device_total_utilization: Vec<_> = device_busy_time.iter().map(|x| x / self.total_time).collect();
+
         let device_peak_memory = self.max_memory.clone();
 
         serde_json::to_writer(output, &json!({
             "device_busy_time": device_busy_time,
+            "device_total_utilization": device_total_utilization,
             "device_peak_memory": device_peak_memory
         })).expect("fail to write log");
     }

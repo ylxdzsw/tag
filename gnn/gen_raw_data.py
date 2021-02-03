@@ -112,6 +112,50 @@ def bert(bsize=None):
     optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
     return optimizer
 
+def berts(bsize=None):
+    import sys
+    sys.path.insert(0, './bert/')
+    from bert.runsquad import new_model_fn_builder
+    import modeling
+    bert_config = modeling.BertConfig.from_json_file("bert/bert_small/bert_config.json")
+    model = new_model_fn_builder(bert_config)
+    features = {}
+    features["input_ids"]= tf.cast(100*tf.placeholder(tf.float32,shape=(bsize,128)),tf.int32)
+    features["input_mask"] = tf.cast(100*tf.placeholder(tf.float32,shape=(bsize,128)),tf.int32)
+    features["segment_ids"]=tf.cast(100*tf.placeholder(tf.float32,shape=(bsize,128)),tf.int32)
+    features["start_positions"] = tf.cast(100*tf.placeholder(tf.float32,shape=(bsize,)),tf.int32)
+    features["end_positions"] =tf.cast(100*tf.placeholder(tf.float32,shape=(bsize,)),tf.int32)
+    loss = model(features)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
+    return optimizer
+
+# https://github.com/pangolulu/char-rnnlm-tensorflow/blob/master/model.py
+def rnnlm2x(bsize=None):
+    x = tf.placeholder(tf.int64, [bsize, 40])
+    y = tf.placeholder(tf.float32, [bsize, 40, 256])
+    embedding = tf.get_variable('embedding', [256, 16])
+    x = tf.nn.embedding_lookup(embedding, x)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x = tf.keras.layers.Dense(256, activation=None)(x)
+    loss = tf.nn.softmax_cross_entropy_with_logits(y, x)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
+    return optimizer
+
+def rnnlm4x(bsize=None):
+    x = tf.placeholder(tf.int64, [bsize, 40])
+    y = tf.placeholder(tf.float32, [bsize, 40, 256])
+    embedding = tf.get_variable('embedding', [256, 16])
+    x = tf.nn.embedding_lookup(embedding, x)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x = tf.keras.layers.Dense(256, activation=None)(x)
+    loss = tf.nn.softmax_cross_entropy_with_logits(y, x)
+    optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
+    return optimizer
+
 import tensorflow as tf
 import numpy as np
 import pickle
@@ -127,7 +171,9 @@ BATCHSIZE = {
     "transformer": 1200,
     "mobilenet": 120,
     "nasnet": 120,
-    "bert": 4
+    "bert": 4,
+    "berts": 4,
+    "rnnlm2x": 120
 }
 
 times = 5

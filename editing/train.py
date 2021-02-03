@@ -4,9 +4,12 @@ import tensorflow as tf
 
 from data import get_all_data
 from model import Model
-from environment import sample, evaluate, base_strategies, score
-from search import search
+from environment import sample_logits, evaluate_with_feedback, score, invalidity, sample_and_evaluate_with_feedback
 from utils import save, load, info
+from baseline import gen_baselines, eval_baselines
+
+from multiprocessing import Pool
+pool = Pool(16)
 
 try:
     records = load("records")
@@ -15,6 +18,34 @@ except:
     records = get_all_data()
     info("no saved records")
     save(records, "records")
+
+def prepare_features(record, nodemask, ncclmask, psmask, feedback):
+    CL2, Bmax = record['scaler']
+
+    op_feats = np.hstack((
+        record["op_feats"],
+        np.reshape(ncclmask, (-1, 1)),
+        np.reshape(feedback['leftout'], (-1, 1))
+    ))
+    device_feats = np.hstack((
+        record["device_feats"],
+        np.reshape(feedback['device_total_utilization'], (-1, 1)),
+        np.array([[feedback['device_peak_memory'][i] / record['topo_spec'].tasks[record['devices'][i][1]].memory] for i in range(len(record['devices'])) ]),
+    ))
+    tensor_feats = record["tensor_feats"]
+    link_feats = record["link_feats"]
+
+    place_extra = []
+    for op_id in range(len(record['gdef'].node)):
+        for dev_id in range(len(record['devices'])):
+            place_extra.append([ nodemask[op_id, dev_id], int(psmask[op_id] == dev_id) ])
+
+    place_feats = np.hstack((
+        record["place_feats"],
+        np.array(place_extra),
+    ))
+
+    return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
 with tf.device("/gpu:0"):
     model = Model()
@@ -27,61 +58,59 @@ with tf.device("/gpu:0"):
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
     L2_regularization_factor = .00001
+    similarity_factor = .1
 
     for epoch in range(20000):
-        record_id = np.random.randint(len(records))
-        record = records[record_id]
+        # record_id = np.random.randint(len(records))
+        record = records[-1]
 
-        if 'reference' not in record:
-            record['reference'] = []
-            for nodemask, ncclmask, psmask in base_strategies(record):
-                loss_env = score(*evaluate(record, nodemask, ncclmask, psmask))
-                record['reference'].append((loss_env, nodemask, ncclmask, psmask))
+        if 'baselines' not in record:
+            baselines = gen_baselines(record)
+            eval_baselines(record, baselines)
+            record['baselines'] = baselines
             save(records, "records")
 
-        if 'elites' not in record:
-            best = record['reference'][0]
-            for loss_env, nodemask, ncclmask, psmask in record['reference']:
-                if loss_env < best[0]:
-                    best = loss_env, nodemask, ncclmask, psmask
-            record['elites'] = [best]
+        if 'nvisits' not in record:
+            record['nvisits'] = 0
 
-        op_feats     = tf.convert_to_tensor(record["op_feats"], dtype=tf.float32)
-        task_feats   = tf.convert_to_tensor(record["task_feats"], dtype=tf.float32)
-        tensor_feats = tf.convert_to_tensor(record["tensor_feats"], dtype=tf.float32)
-        link_feats   = tf.convert_to_tensor(record["link_feats"], dtype=tf.float32)
-        place_feats  = tf.convert_to_tensor(record["place_feats"], dtype=tf.float32)
+        record['nvisits'] += 1
+
+        if 'exp' not in record:
+            record['exp'] = []
+
         model.set_graph(record["graph"])
 
-        # search
-        if epoch > 200 and epoch % 20 == 0:
-            logit = model([op_feats, task_feats, tensor_feats, link_feats, place_feats], training=True)
+        b = np.random.choice(record['baselines'])
+        features = prepare_features(record, b.nodemask, np.array(b.ncclmask), b.psmask, b.feedback)
 
-            placement = sample(logit)
-            loss_env, nodemask, ncclmask, psmask = search(record, placement)
-
-            if loss_env < record['elites'][-1][0]:
-                record['elites'].append((loss_env, nodemask, ncclmask, psmask))
-                record["elites"] = record["elites"][-4:]
-
-            info(record_id, loss_env, [ x for x, *_ in record['reference'] ])
-
-        # learn
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
-            logit = model([op_feats, task_feats, tensor_feats, link_feats, place_feats], training=True)
+            nodelogit, nccllogit = model(features, training=True)
 
+            rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(64)])
             loss = 0
-            for loss_env, nodemask, ncclmask, psmask in record['elites']:
-                nodemask = np.sign(nodemask)
-                loss += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), logit))
-            loss /= len(record['elites'])
 
+            # evaluate_with_feedback(record, sample_logits(nodelogit), sample_logits(nccllogit), None, trace=True)
+
+            # score loss
+            base = min(b.score for b in record['baselines'])
+            mean = sum(score for _, _, score, _ in rs) / len(rs)
+            for nodemask, ncclmask, loss_env, feedback in rs:
+                normalized_loss = (loss_env - mean) / base
+                loss += normalized_loss * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
+                loss += normalized_loss * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit))
+            loss /= len(rs)
+
+            # similarity loss: we want the new strategy somewhat similar to the old one
+            # loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(b.nodemask.astype(np.float32), nodelogit))
+            # loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(b.ncclmask).astype(np.float32), nccllogit))
+
+            # regularization loss
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:
                     loss += L2_regularization_factor * tf.nn.l2_loss(weight)
 
-            info(record_id, loss.numpy())
+            info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], min(score for _, _, score, _ in rs))
 
             grads = tape.gradient(loss, model.trainable_weights)
             # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])

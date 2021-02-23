@@ -1,8 +1,8 @@
 use oh_my_rust::*;
-use std::convert::TryInto;
+use core::convert::TryInto;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex};
-use std::cmp;
+use core::cmp;
 use crate::misc::{Target, Profiler};
 use crate::graph::Form;
 use crate::proto::types::DataType;
@@ -85,8 +85,6 @@ fn parse_input(x: &str) -> (&str, usize) {
 }
 
 pub fn mark_non_dangling_nodes(target: &Target) -> std::collections::HashSet<String> {
-    let sinks: Vec<_> = target.sinks.iter().map(|x| format!("{}/replica_0", x)).collect();
-
     // note: don't forget control dependency
     let dict: std::collections::HashMap<_, Vec<_>> = target.pb.node.iter().map(|node| {
         (&node.name[..], node.input.iter().map(|x| {
@@ -100,7 +98,7 @@ pub fn mark_non_dangling_nodes(target: &Target) -> std::collections::HashSet<Str
         }).collect())
     }).collect();
     let mut keep = std::collections::HashSet::new();
-    let mut queue: std::collections::VecDeque<_> = sinks.iter().map(|x| &x[..]).collect();
+    let mut queue: std::collections::VecDeque<_> = target.sinks.iter().map(|x| &x[..]).collect();
 
     while let Some(x) = queue.pop_front() {
         if keep.insert(x.to_string()) {

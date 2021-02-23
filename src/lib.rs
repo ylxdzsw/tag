@@ -21,7 +21,7 @@ pub mod scheduler;
 
 #[no_mangle]
 unsafe extern fn create_graph(pb: *const u8, pb_len: u32) -> *mut Graph {
-    let pb = std::slice::from_raw_parts(pb, pb_len as usize);
+    let pb = core::slice::from_raw_parts(pb, pb_len as usize);
     let g: proto::graph::GraphDef = parse_from_bytes(pb).unwrap();
 
     Box::leak(Graph::new(&g.node))
@@ -34,15 +34,15 @@ unsafe extern fn destroy_graph(graph: *mut Graph) {
 
 #[no_mangle]
 unsafe extern fn set_option(graph: *mut Graph, name: *const u8, name_len: u32, value: *const u8, value_len: u32) {
-    let name = std::str::from_utf8(std::slice::from_raw_parts(name, name_len as usize)).unwrap();
-    let value = std::str::from_utf8(std::slice::from_raw_parts(value, value_len as usize)).unwrap();
+    let name = core::str::from_utf8(core::slice::from_raw_parts(name, name_len as usize)).unwrap();
+    let value = core::str::from_utf8(core::slice::from_raw_parts(value, value_len as usize)).unwrap();
     (*graph).options.insert(name.to_string(), value.to_string());
 }
 
 #[no_mangle]
 unsafe extern fn get_groups(graph: *mut Graph, names_raw: *const u8, names_len: *const u8, result: *mut u32) {
-    let names = std::str::from_utf8(std::slice::from_raw_parts(names_raw, names_len as usize)).unwrap().split_ascii_whitespace();
-    let result = std::slice::from_raw_parts_mut(result, (*graph).nodes.len()); // the actual length could be shorter
+    let names = core::str::from_utf8(core::slice::from_raw_parts(names_raw, names_len as usize)).unwrap().split_ascii_whitespace();
+    let result = core::slice::from_raw_parts_mut(result, (*graph).nodes.len()); // the actual length could be shorter
     let groups = (*graph).get_groups();
     let mut group_id = BTreeMap::new();
     let mut id = 0;
@@ -59,7 +59,7 @@ unsafe extern fn get_groups(graph: *mut Graph, names_raw: *const u8, names_len: 
 
 #[no_mangle]
 unsafe extern fn edit_graph(graph: *mut Graph, target: *mut Target, strategy_raw: *const u8, strategy_len: u32) {
-    let strategy_str = std::str::from_utf8(std::slice::from_raw_parts(strategy_raw, strategy_len as usize)).unwrap();
+    let strategy_str = core::str::from_utf8(core::slice::from_raw_parts(strategy_raw, strategy_len as usize)).unwrap();
     let strategy = strategy_str.lines().map(|line| {
         let line = line.split_ascii_whitespace().collect::<Vec<_>>();
         let name = <&str>::clone(&line[0]);
@@ -83,19 +83,19 @@ unsafe extern fn create_target(
     sinks_raw: *const u8, sinks_len: u32,
     nccls_raw: *const u8, nccls_len: u32
 ) -> *mut Target {
-    let links_str = std::str::from_utf8(std::slice::from_raw_parts(links_raw, links_len as usize)).unwrap();
+    let links_str = core::str::from_utf8(core::slice::from_raw_parts(links_raw, links_len as usize)).unwrap();
     let links = links_str.split_ascii_whitespace().map(|x| x.parse().unwrap()).collect();
 
-    let paths_str = std::str::from_utf8(std::slice::from_raw_parts(paths_raw, paths_len as usize)).unwrap();
+    let paths_str = core::str::from_utf8(core::slice::from_raw_parts(paths_raw, paths_len as usize)).unwrap();
     let paths = paths_str.lines().map(|x| x.split_ascii_whitespace().map(|x| x.parse().unwrap()).collect()).collect();
 
-    let devices_str = std::str::from_utf8(std::slice::from_raw_parts(devices_raw, devices_len as usize)).unwrap();
+    let devices_str = core::str::from_utf8(core::slice::from_raw_parts(devices_raw, devices_len as usize)).unwrap();
     let devices = devices_str.split_ascii_whitespace().map(|x| x.to_owned()).collect();
 
-    let sinks_str = std::str::from_utf8(std::slice::from_raw_parts(sinks_raw, sinks_len as usize)).unwrap();
+    let sinks_str = core::str::from_utf8(core::slice::from_raw_parts(sinks_raw, sinks_len as usize)).unwrap();
     let sinks = sinks_str.split_ascii_whitespace().map(|x| x.to_string()).collect();
 
-    let nccls_str = std::str::from_utf8(std::slice::from_raw_parts(nccls_raw, nccls_len as usize)).unwrap();
+    let nccls_str = core::str::from_utf8(core::slice::from_raw_parts(nccls_raw, nccls_len as usize)).unwrap();
     let nccls = nccls_str.lines().filter(|x| !x.is_empty()).map(|line| {
         let mut m = [0., 0., 0., 0.];
         let line: Vec<_> = line.split_ascii_whitespace().collect();
@@ -121,7 +121,7 @@ unsafe extern fn compute_size(target: *mut Target) -> u32 {
 
 #[no_mangle]
 unsafe extern fn read_protobuf(target: *mut Target, dest: *mut u8) {
-    let mut ptr = std::slice::from_raw_parts_mut(dest, (*target).pb.get_cached_size() as usize);
+    let mut ptr = core::slice::from_raw_parts_mut(dest, (*target).pb.get_cached_size() as usize);
     (*target).pb.write_to_writer(&mut ptr).unwrap()
 }
 
@@ -132,7 +132,7 @@ unsafe extern fn compile(graph: *mut Graph, target: *mut Target) {
 
 #[no_mangle]
 unsafe extern fn create_profiler(profile_data: *const u8, profile_len: u32) -> *mut DataProfiler {
-    let profile_str = std::str::from_utf8(std::slice::from_raw_parts(profile_data, profile_len as usize)).unwrap();
+    let profile_str = core::str::from_utf8(core::slice::from_raw_parts(profile_data, profile_len as usize)).unwrap();
     let mut profile_dict: BTreeMap<String, Vec<(usize, Vec<u64>)>> = BTreeMap::new();
     for line in profile_str.lines() {
         let line = line.split_ascii_whitespace().collect::<Vec<_>>();
@@ -176,11 +176,11 @@ unsafe extern fn evaluate(
     }
 
     if chrome_len > 0 {
-        simulator.write_chrome(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(chrome_path, chrome_len as _)).unwrap()).unwrap())
+        simulator.write_chrome(&mut std::fs::File::create(&core::str::from_utf8(core::slice::from_raw_parts(chrome_path, chrome_len as _)).unwrap()).unwrap())
     }
 
     if dump_len > 0 {
-        simulator.dump_records(&mut std::fs::File::create(&std::str::from_utf8(std::slice::from_raw_parts(dump_path, dump_len as _)).unwrap()).unwrap())
+        simulator.dump_records(&mut std::fs::File::create(&core::str::from_utf8(core::slice::from_raw_parts(dump_path, dump_len as _)).unwrap()).unwrap())
     }
 
     simulator.get_total_time()
@@ -207,14 +207,19 @@ unsafe extern fn remove_dangling_nodes(target: *mut Target) {
 }
 
 #[no_mangle]
-unsafe extern fn simplify_graph(pb: *mut u8, pb_len: *mut u32) {
-    let mut pb = std::slice::from_raw_parts_mut(pb, (*pb_len) as usize);
-    let mut g: proto::graph::GraphDef = parse_from_bytes(pb).unwrap();
+unsafe extern fn simplify_graph(pb: *mut u8, pb_len: *mut u32, sinks_raw: *const u8, sinks_len: u32) {
+    let sinks_str = core::str::from_utf8(core::slice::from_raw_parts(sinks_raw, sinks_len as usize)).unwrap();
+    let sinks = sinks_str.split_ascii_whitespace().map(|x| x.to_string()).collect();
 
-    g.node = polishing::simplify_graph(&g.node).into();
+    let mut pb = core::slice::from_raw_parts_mut(pb, (*pb_len) as usize);
+    let g: proto::graph::GraphDef = parse_from_bytes(pb).unwrap();
 
-    let new_size = g.compute_size();
+    let mut target = Target::new(g, Default::default(), Default::default(), Default::default(), sinks, Default::default());
+    polishing::remove_dangling_nodes(&mut target);
+    polishing::merge_trivial_nodes(&mut target);
+
+    let new_size = target.pb.compute_size();
     assert!(new_size <= *pb_len);
     *pb_len = new_size;
-    g.write_to_writer(&mut pb).unwrap()
+    target.pb.write_to_writer(&mut pb).unwrap()
 }

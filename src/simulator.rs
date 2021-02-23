@@ -1,9 +1,9 @@
 use oh_my_rust::*;
 use serde_json::json;
-use std::{convert::TryInto, fmt::Write};
+use core::{convert::TryInto, fmt::Write};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex};
-use std::cmp;
+use core::cmp;
 use crate::misc::{Target, Profiler};
 use crate::graph::Form;
 use crate::proto::types::DataType;
@@ -105,7 +105,7 @@ impl Simulator for SimpleSimulator {
     fn simulate(&mut self, profiler: &impl Profiler, mut target: Target) {
         task!("evaluating graph of {} nodes...", target.pb.node.len());
 
-        target.pb.node = sort_nodes(std::mem::take(&mut target.pb.node).into_vec()).into();
+        target.pb.node = sort_nodes(core::mem::take(&mut target.pb.node).into_vec()).into();
         self.target = target;
         let target = &self.target;
         let nodes = &target.pb.node;
@@ -199,7 +199,7 @@ impl Simulator for SimpleSimulator {
                     TaskType::Transfer { size, path } => {
                         let est = path.iter().fold(time, |max, link| cmp::max(max, link_available_time[*link]));
                         task.duration = if !path.is_empty() {
-                            let bandwidth = path.iter().fold(std::u64::MAX, |min, link| cmp::min(min, target.links[*link]));
+                            let bandwidth = path.iter().fold(core::u64::MAX, |min, link| cmp::min(min, target.links[*link]));
                             size / bandwidth + GRPC_LATENCY
                         } else {
                             0

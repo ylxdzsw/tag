@@ -1,3 +1,5 @@
+use std::mem::take;
+
 use oh_my_rust::*;
 use crate::misc::*;
 use crate::graph::*;
@@ -22,10 +24,8 @@ pub fn remove_shape_hint(target: &mut Target) {
 }
 
 pub fn remove_dangling_nodes(target: &mut Target) {
-    let sinks: Vec<_> = target.sinks.iter().map(|x| format!("{}/replica_0", x)).collect();
-
     // note: don't forget control dependency
-    let dict: std::collections::HashMap<_, Vec<_>> = target.pb.node.iter().map(|node| {
+    let input_node_dict: std::collections::HashMap<_, Vec<_>> = target.pb.node.iter().map(|node| {
         (&node.name[..], node.input.iter().map(|x| {
             if x.starts_with('^') {
                 return &x[1..]
@@ -37,11 +37,11 @@ pub fn remove_dangling_nodes(target: &mut Target) {
         }).collect())
     }).collect();
     let mut keep = std::collections::HashSet::new();
-    let mut queue: std::collections::VecDeque<_> = sinks.iter().map(|x| &x[..]).collect();
+    let mut queue: std::collections::VecDeque<_> = target.sinks.iter().map(|x| &x[..]).collect();
 
     while let Some(x) = queue.pop_front() {
         if keep.insert(x.to_string()) {
-            queue.extend(&dict[x]);
+            queue.extend(&input_node_dict[x]);
         }
     }
 
@@ -80,8 +80,38 @@ pub fn fuse_mini_batch(nodes: &[NodeDef], times: usize) -> Vec<NodeDef> {
     todo!()
 }
 
-// remove identity nodes, NoOp nodes (except for sinks), control dependencies (except for sinks), and all dangling nodes
-pub fn simplify_graph(nodes: &[NodeDef]) -> Vec<NodeDef> {
-    nodes.to_owned()
+// remove identity nodes, NoOp nodes, and control dependencies, except for sinks
+pub fn merge_trivial_nodes(target: &mut Target) {
+    let mut merged: std::collections::BTreeMap<String, String> = Default::default();
+    target.pb.node = core::mem::take(&mut target.pb.node).into_iter().filter(|node| {
+        if target.sinks.contains(&node.name) {
+            return true
+        }
+
+        match &node.op[..] {
+            "NoOp" => {
+                return false
+            }
+            "Identity" => {
+                merged.insert(node.name.clone(), node.input[0].clone());
+                return false
+            }
+            _ => return true
+        }
+    }).collect();
+
+    for node in target.pb.node.iter_mut() {
+        node.input = core::mem::take(&mut node.input).into_iter().filter_map(|input| {
+            if input.starts_with('^') {
+                return None
+            }
+
+            if let Some(new_name) = merged.get(&input) { // by default Tensorflow omit :0 for the first output
+                return Some(new_name.clone())
+            } else {
+                return Some(input)
+            }
+        }).collect();
+    }
 }
 

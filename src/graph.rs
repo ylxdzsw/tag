@@ -2,14 +2,14 @@ use oh_my_rust::*;
 use protobuf::Message;
 use crate::proto::{graph::GraphDef, node_def::NodeDef, attr_value::AttrValue, types::DataType};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
-use std::convert::TryInto;
-use std::iter::FromIterator;
+use core::fmt::Write;
+use core::convert::TryInto;
+use core::iter::FromIterator;
 use crate::proto::attr_value::AttrValue_ListValue;
-use std::hint::unreachable_unchecked;
+use core::hint::unreachable_unchecked;
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::hash::Hash;
+use core::cell::RefCell;
+use core::hash::Hash;
 use crate::misc::Target;
 
 #[derive(Default)]
@@ -84,7 +84,12 @@ impl Graph {
             node.compile(target)
         }
 
-        self.add_control_dependencies_for_collective_nodes(target)
+        self.add_control_dependencies_for_collective_nodes(target);
+
+        // TODO: integrate this into the compiling stage incase of we replicate the sinks in the future
+        for sink in target.sinks.iter_mut() {
+            *sink = format!("{}/replica_0", sink)
+        }
     }
 
     /// set flags and assign groups for nodes

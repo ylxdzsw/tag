@@ -1,5 +1,5 @@
 use oh_my_rust::*;
-use std::convert::TryInto;
+use core::convert::TryInto;
 use crate::graph::*;
 use std::collections::{BTreeSet, BTreeMap};
 use crate::misc::Target;

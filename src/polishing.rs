@@ -1,5 +1,3 @@
-use std::mem::take;
-
 use oh_my_rust::*;
 use crate::misc::*;
 use crate::graph::*;
@@ -92,7 +90,7 @@ pub fn merge_trivial_nodes(target: &mut Target) {
             "NoOp" => {
                 return false
             }
-            "Identity" => {
+            "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" => { // TODO: save the name of merged node into attr of the parent and look up for the computation time when simulating
                 merged.insert(node.name.clone(), node.input[0].clone());
                 return false
             }
@@ -101,6 +99,10 @@ pub fn merge_trivial_nodes(target: &mut Target) {
     }).collect();
 
     for node in target.pb.node.iter_mut() {
+        if target.sinks.contains(&node.name) { // what if the sink node refers to a node that is merged?
+            continue
+        }
+
         node.input = core::mem::take(&mut node.input).into_iter().filter_map(|input| {
             if input.starts_with('^') {
                 return None

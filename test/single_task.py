@@ -166,6 +166,24 @@ g = (tge.TGE(gdef, devices)
     .evaluate(prof_dict, "simulated.json", "dump.json")
 )
 
+tge.simplify_graph(gdef)
+
+with open("simplified.pb", "w") as fo:
+    fo.write(pbtf.MessageToString(gdef))
+
+gg = (tge.TGE(gdef, devices)
+    .custom(strategy)
+    .fill_batchsize(BATCHSIZE)
+    .replace_placeholder(BATCHSIZE)
+    .use_collective()
+    # .verbose()
+    .set_bandwidth(intra=2810, inter=2810)
+    .heft(prof_dict)
+    # .set_nccl_model(nccl_model)
+    .evaluate(prof_dict)
+)
+
 print("actual: {}".format(toc - tic))
 print("simulated: {}".format(g[0] / 1_000_000))
+print("simplified: {}".format(gg[0] / 1_000_000))
 print("memory: {}".format([ x / 2**30 for x in g[1]]))

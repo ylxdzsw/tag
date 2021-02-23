@@ -205,3 +205,16 @@ unsafe extern fn destruct_names(target: *mut Target) {
 unsafe extern fn remove_dangling_nodes(target: *mut Target) {
     polishing::remove_dangling_nodes(&mut *target);
 }
+
+#[no_mangle]
+unsafe extern fn simplify_graph(pb: *mut u8, pb_len: *mut u32) {
+    let mut pb = std::slice::from_raw_parts_mut(pb, (*pb_len) as usize);
+    let mut g: proto::graph::GraphDef = parse_from_bytes(pb).unwrap();
+
+    g.node = polishing::simplify_graph(&g.node).into();
+
+    let new_size = g.compute_size();
+    assert!(new_size <= *pb_len);
+    *pb_len = new_size;
+    g.write_to_writer(&mut pb).unwrap()
+}

@@ -65,11 +65,21 @@ libtge.destruct_names.restype = None
 libtge.remove_dangling_nodes.argtypes = [ctypes.c_void_p]
 libtge.remove_dangling_nodes.restype = None
 
+libtge.simplify_graph.argtypes = [ctypes.POINTER(ctypes.c_char), ctypes.POINTER(ctypes.c_uint32)]
+libtge.simplify_graph.restype = None
+
 def chain(func):
     def chained(self, *args, **kwargs):
         func(self, *args, **kwargs)
         return self
     return chained
+
+def simplify_graph(graph_def):
+    graph_raw = graph_def.SerializeToString()
+    graph_raw_mut = ctypes.create_string_buffer(graph_raw, len(graph_raw))
+    graph_len_mut = (ctypes.c_uint32 * 1)(len(graph_raw_mut))
+    libtge.simplify_graph(graph_raw_mut, graph_len_mut)
+    graph_def.ParseFromString(graph_raw_mut.raw[:graph_len_mut[0]])
 
 class TGE:
     def __init__(self, graph_def, device_list, sinks=["GradientDescent"]):

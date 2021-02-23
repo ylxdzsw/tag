@@ -79,3 +79,9 @@ pub fn fuse_mini_batch(nodes: &[NodeDef], times: usize) -> Vec<NodeDef> {
 
     todo!()
 }
+
+// remove identity nodes, NoOp nodes (except for sinks), control dependencies (except for sinks), and all dangling nodes
+pub fn simplify_graph(nodes: &[NodeDef]) -> Vec<NodeDef> {
+    nodes.to_owned()
+}
+

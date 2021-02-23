@@ -62,7 +62,7 @@ with tf.device("/gpu:0"):
 
     for epoch in range(20000):
         # record_id = np.random.randint(len(records))
-        record = records[-1]
+        record = records[0]
 
         if 'baselines' not in record:
             baselines = gen_baselines(record)

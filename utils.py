@@ -50,10 +50,9 @@ def adapt_batchsize(profile_data, original_batchsize, new_batchsize, nrep_limit)
     data_points = { (node, dev): [(original_batchsize // nrep, cost_list[dev]) for ((_name, nrep), cost_list) in profile_data.items() if _name == node ] for node in nodes for dev in range(ndev) }
     return { (node, nrep): [linear_pred(data_points[(node, dev)], new_batchsize // nrep) for dev in range(ndev)] for node in nodes for nrep in range(1, nrep_limit+1) if new_batchsize % nrep == 0 }
 
-def group_around_topk_costs(gdef, groups, profile_data, k):
+def group_around_topk_costs(gdef, groups, cost, k):
     # cores are the largest cost node in each group, which are used to represent the whole group. Centers are topk cores.
-    def cost(x):
-        return profile_data[(x, 1)][0]
+    # cost is a function form node name to its cost, typically prof_data[x]
 
     groups = { gdef.node[i].name: id for i, id in enumerate(groups) } # node -> group
     cores = {} # group -> core node

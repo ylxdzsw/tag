@@ -131,28 +131,28 @@ def berts(bsize=None):
 
 # https://github.com/pangolulu/char-rnnlm-tensorflow/blob/master/model.py
 def rnnlm2x(bsize=None):
-    x = tf.placeholder(tf.int64, [bsize, 40])
-    y = tf.placeholder(tf.float32, [bsize, 40, 256])
+    x = tf.placeholder(tf.int64, [bsize, 20])
+    y = tf.placeholder(tf.float32, [bsize, 20, 256])
     embedding = tf.get_variable('embedding', [256, 16])
     x = tf.nn.embedding_lookup(embedding, x)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
     x = tf.keras.layers.Dense(256, activation=None)(x)
-    loss = tf.nn.softmax_cross_entropy_with_logits(y, x)
+    loss = tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=x)
     optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
     return optimizer
 
 def rnnlm4x(bsize=None):
-    x = tf.placeholder(tf.int64, [bsize, 40])
-    y = tf.placeholder(tf.float32, [bsize, 40, 256])
+    x = tf.placeholder(tf.int64, [bsize, 20])
+    y = tf.placeholder(tf.float32, [bsize, 20, 256])
     embedding = tf.get_variable('embedding', [256, 16])
     x = tf.nn.embedding_lookup(embedding, x)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
-    x, _, _ = tf.keras.layers.LSTM(4)(x, return_sequences=True, unroll=True)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
+    x = tf.keras.layers.LSTM(4, return_sequences=True, unroll=True)(x)
     x = tf.keras.layers.Dense(256, activation=None)(x)
-    loss = tf.nn.softmax_cross_entropy_with_logits(y, x)
+    loss = tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=x)
     optimizer = tf.train.AdamOptimizer(learning_rate=0.2).minimize(tf.reduce_sum(loss))
     return optimizer
 
@@ -163,17 +163,18 @@ from profiler import Profiler
 from utils import adapt_batchsize
 
 BATCHSIZE = {
-    "vgg": 120,
-    "resnet": 120,
-    "mlp": 120,
-    "lenet": 120,
-    "inception": 120,
-    "transformer": 1200,
-    "mobilenet": 120,
-    "nasnet": 120,
-    "bert": 4,
-    "berts": 4,
-    "rnnlm2x": 120
+    "vgg": 60,
+    "resnet": 60,
+    "mlp": 60,
+    "lenet": 60,
+    "inception": 60,
+    "transformer": 600,
+    "mobilenet": 60,
+    "nasnet": 60,
+    "bert": 2,
+    "berts": 2,
+    "rnnlm2x": 60,
+    "rnnlm4x": 60
 }
 
 times = 5
@@ -181,24 +182,30 @@ times = 5
 import sys
 model_fn = eval(sys.argv[1])
 gtype = sys.argv[2]
-prof_batch_size = BATCHSIZE[sys.argv[1]]
-target_batch_size = max(8, prof_batch_size)
+batch_size = BATCHSIZE[sys.argv[1]]
 
-prof_dict = {}
-for nrep in (2, 4, 6, 8):
-    if prof_batch_size // nrep <= 0:
+import pathlib
+pathlib.Path("raw_data/{}/{}".format(model_fn.__name__, gtype)).mkdir(parents=True, exist_ok=True)
+
+# first dump the model
+opt = model_fn()
+init = tf.global_variables_initializer()
+gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
+
+with open("raw_data/{}/model.pickle".format(model_fn.__name__), 'wb') as f:
+    pickle.dump(gdef, f)
+
+for nrep in (1, 2, 3, 4, 6, 10):
+    if batch_size % nrep != 0:
         continue
+
+    prof_dict = {}
     tf.reset_default_graph()
     opt = model_fn()
     init = tf.global_variables_initializer()
     gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-    ps = [ Profiler(gdef, prof_batch_size // nrep, sinks=["Adam"]) for _ in range(times) ]
+    ps = [ Profiler(gdef, batch_size // nrep, sinks=["Adam"]) for _ in range(times) ]
     for node in gdef.node:
-        prof_dict[(node.name, nrep)] = [int(np.median([ p.profile(node.name, "/GPU:0") for p in ps ]))]
-prof_dict = adapt_batchsize(prof_dict, prof_batch_size, target_batch_size, 16)
-tf.reset_default_graph()
-opt = model_fn()
-init = tf.global_variables_initializer()
-gdef = tf.get_default_graph().as_graph_def(add_shapes=True)
-with open("raw_data/{}_{}_{}.pickle".format(model_fn.__name__, gtype, target_batch_size), 'wb') as f:
-    pickle.dump((gdef, prof_dict), f)
+        prof_dict[node.name] = int(np.median([ p.profile(node.name, "/GPU:0") for p in ps ]))
+    with open("raw_data/{}/{}/{}.pickle".format(model_fn.__name__, gtype, batch_size // nrep), 'wb') as f:
+        pickle.dump(prof_dict, f)

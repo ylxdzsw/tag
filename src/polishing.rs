@@ -81,6 +81,7 @@ pub fn fuse_mini_batch(nodes: &[NodeDef], times: usize) -> Vec<NodeDef> {
 // remove identity nodes, NoOp nodes, and control dependencies, except for sinks
 pub fn merge_trivial_nodes(target: &mut Target) {
     let mut merged: std::collections::BTreeMap<String, String> = Default::default();
+    let mut control_dependency: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     target.pb.node = core::mem::take(&mut target.pb.node).into_iter().filter(|node| {
         if target.sinks.contains(&node.name) {
             return true
@@ -88,6 +89,7 @@ pub fn merge_trivial_nodes(target: &mut Target) {
 
         match &node.op[..] {
             "NoOp" => {
+                control_dependency.insert(node.name.clone(), node.input.clone().into());
                 return false
             }
             "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" => { // TODO: save the name of merged node into attr of the parent and look up for the computation time when simulating
@@ -99,7 +101,35 @@ pub fn merge_trivial_nodes(target: &mut Target) {
     }).collect();
 
     for node in target.pb.node.iter_mut() {
-        if target.sinks.contains(&node.name) { // what if the sink node refers to a node that is merged?
+        if target.sinks.contains(&node.name) {
+            let mut leaf_controls = vec![];
+
+            node.input = core::mem::take(&mut node.input).into_iter().filter_map(|input| {
+                if input.starts_with('^') {
+                    let mut controls = vec![input];
+                    while let Some(x) = controls.pop() {
+                        if let Some(dependencies) = control_dependency.get(&x[1..]) {
+                            controls.extend(dependencies.iter().cloned())
+                        } else if let Some(new_name) = merged.get(&x[1..]) {
+                            controls.push(format!("^{}", new_name))
+                        } else {
+                            leaf_controls.push(x)
+                        }
+                    }
+                    return None
+                }
+
+                let mut leaf = &input;
+                while let Some(new_name) = merged.get(leaf) { // by default Tensorflow omit :0 for the first output, so for our trivial nodes the tensor name is the node name
+                    leaf = new_name
+                }
+                return Some(leaf.clone())
+            }).collect();
+
+            for x in leaf_controls.into_iter(){
+                node.input.push(x)
+            }
+
             continue
         }
 
@@ -108,11 +138,11 @@ pub fn merge_trivial_nodes(target: &mut Target) {
                 return None
             }
 
-            if let Some(new_name) = merged.get(&input) { // by default Tensorflow omit :0 for the first output
-                return Some(new_name.clone())
-            } else {
-                return Some(input)
+            let mut leaf = &input;
+            while let Some(new_name) = merged.get(leaf) { // by default Tensorflow omit :0 for the first output, so for our trivial nodes the tensor name is the node name
+                leaf = new_name
             }
+            return Some(leaf.clone())
         }).collect();
     }
 }

@@ -9,7 +9,7 @@ from utils import save, load, info
 from baseline import gen_baselines, eval_baselines
 
 from multiprocessing import Pool
-pool = Pool(16)
+pool = Pool(8)
 
 try:
     records = load("records")
@@ -47,6 +47,8 @@ def prepare_features(record, nodemask, ncclmask, psmask, feedback):
 
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
+# def rollout():
+
 with tf.device("/gpu:0"):
     model = Model()
 
@@ -56,13 +58,13 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.0001, clipnorm=6)
-    L2_regularization_factor = .00001
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00001, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
+    L2_regularization_factor = 0 #.00001
     similarity_factor = .1
 
     for epoch in range(20000):
-        # record_id = np.random.randint(len(records))
-        record = records[0]
+        record_id = np.random.randint(len(records))
+        record = records[record_id]
 
         if 'baselines' not in record:
             baselines = gen_baselines(record)
@@ -90,6 +92,9 @@ with tf.device("/gpu:0"):
             rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(64)])
             loss = 0
 
+            # np.set_printoptions(threshold=99999)
+            # info(rs[0][0])
+
             # evaluate_with_feedback(record, sample_logits(nodelogit), sample_logits(nccllogit), None, trace=True)
 
             # score loss
@@ -112,7 +117,7 @@ with tf.device("/gpu:0"):
 
             info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], min(score for _, _, score, _ in rs))
 
-            grads = tape.gradient(loss, model.trainable_weights)
+            grads = tape.gradient(-loss, model.trainable_weights)
             # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 

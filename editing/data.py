@@ -7,6 +7,7 @@ import pickle
 import math
 import itertools
 import networkx as nx
+import tge
 from utils import groupby, car, cadr, cdr, info, load, parse_input, get_input_size
 from metis import metis
 
@@ -63,6 +64,8 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     for thisnodeid, node in enumerate(gdef.node):
         for input in node.input:
             x, input_index = parse_input(input)
+            if x not in name_dict:
+                info(x)
             nodeid = name_dict[x]
             tensorsize = get_input_size(gdef.node[nodeid], input_index, batchsize)
             tensor_sizes[(thisnodeid, nodeid)] += tensorsize
@@ -154,12 +157,13 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
 def get_all_data():
     models = []
-    for m in ("resnet", "inception", "transformer", "bert"): # "vgg", "transformer", "bert",  "mobilenet", "nasnet"
+    for m in ("resnet", "inception"): # "vgg", "transformer", "bert",  "mobilenet", "nasnet"
         agg_prof_data = {}
         gdef, batchsize = None, None
         for gtype in ('1080ti', 'v100'):
             gdef, prof_data, _, batchsize = load("{}_{}.pickle".format(m, gtype))
             agg_prof_data[gtype] = prof_data
+        tge.simplify_graph(gdef, sinks=["Adam"])
         models.append((gdef, agg_prof_data, batchsize))
 
     topos1 = [TopoSpec([
@@ -202,7 +206,7 @@ def get_all_data():
         TopoSpecTask('1080ti', 6<<30, 8000, 1),
     ], [[2810] * 8] * 8)]
 
-    return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos1[0]]]
+    return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos1[0], topos2[0]]]
 
 def gen_nccl_model(topo_spec: TopoSpec):
     # TGE automatically use only the leader (first device) to determin the nccl model to use when no exact model present

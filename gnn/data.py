@@ -69,11 +69,10 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
         from tge import TGE
 
         base_groups = TGE(gdef, devices).get_groups()
-        id_list = group_around_topk_costs(gdef, base_groups, prof_data[topo_spec.tasks[0].gpu_model], n_groups-1) # TODO: use average time in all gpu types? weighted average?
+        id_list = group_around_topk_costs(gdef, base_groups, lambda x: prof_data[topo_spec.tasks[0].gpu_model][(x, 1)][0], n_groups-1) # TODO: use average time in all gpu types? weighted average?
         return list(groupby(enumerate(id_list), key=cadr, value=car).values())
 
     def group_with_metis(n_groups=20):
-        from utils import group_around_topk_costs
         from tge import TGE
 
         base_groups = TGE(gdef, devices).get_groups()
@@ -218,41 +217,6 @@ def get_all_data():
     ], [[2810] * 8] * 8)]
 
     return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos1[0]]]
-
-# prim's algorithm
-# alternative: https://networkx.github.io/documentation/stable/reference/algorithms/tree.html#module-networkx.algorithms.tree.mst
-def k_spanning_tree(g, weights, k, seed=0):
-    def get_weight(center, neighbor):
-        return weights[ng.adj[center][neighbor][0]['id']]
-
-    ng = g.to_networkx()
-    tree_nodes = [seed]
-    tree_edges = []
-    while True:
-        bridges = [(center, neighbor) for center in tree_nodes for neighbor in ng.adj[center] if neighbor not in tree_nodes ]
-        if len(bridges) == 0:
-            break
-        highest_weight = np.max([ get_weight(center, neighbor) for center, neighbor in bridges ])
-        index_of_edge_to_add = np.random.choice([ i for i, (center, neighbor) in enumerate(bridges) if get_weight(center, neighbor) == highest_weight ])
-        center, neighbor = bridges[index_of_edge_to_add]
-        tree_nodes.append(neighbor)
-        tree_edges.append((center, neighbor, highest_weight))
-    tree_edges.sort(key=lambda x: x[2])
-    tree_edges = set( (center, neighbor) for center, neighbor, weight in tree_edges[k-1:] )
-    groups = []
-    for node in tree_nodes:
-        for group in groups:
-            for neighbor in group:
-                if (node, neighbor) in tree_edges or (neighbor, node) in tree_edges:
-                    group.append(node)
-                    break
-            else:
-                continue
-            break
-        else:
-            groups.append([node])
-
-    return groups
 
 def gen_nccl_model(topo_spec: TopoSpec):
     # TGE automatically use only the leader (first device) to determin the nccl model to use when no exact model present

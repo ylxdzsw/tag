@@ -157,7 +157,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
 def get_all_data():
     models = []
-    for m in ("resnet", "inception"): # "vgg", "transformer", "bert",  "mobilenet", "nasnet"
+    for m in ("inception", "vgg"): # "resnet", "vgg", "transformer", "bert",  "mobilenet", "nasnet"
         agg_prof_data = {}
         gdef, batchsize = None, None
         for gtype in ('1080ti', 'v100'):
@@ -165,6 +165,14 @@ def get_all_data():
             agg_prof_data[gtype] = prof_data
         tge.simplify_graph(gdef, sinks=["Adam"])
         models.append((gdef, agg_prof_data, batchsize))
+
+    topos0 = [TopoSpec([
+        TopoSpecTask('1080ti', 6<<30, intra, 2),
+        TopoSpecTask('1080ti', 6<<30, intra, 2),
+        TopoSpecTask('v100',   8<<30, intra, 4),
+    ], [[28100, 28100, 28100],
+        [28100, 28100, 28100],
+        [28100, 28100, 28100]]) for intra in (80000, 200000)]
 
     topos1 = [TopoSpec([
         TopoSpecTask('1080ti', 6<<30, intra, 2),
@@ -206,7 +214,7 @@ def get_all_data():
         TopoSpecTask('1080ti', 6<<30, 8000, 1),
     ], [[2810] * 8] * 8)]
 
-    return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos1[0], topos2[0]]]
+    return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos0[1],topos1[1],topos2[1]]]
 
 def gen_nccl_model(topo_spec: TopoSpec):
     # TGE automatically use only the leader (first device) to determin the nccl model to use when no exact model present
@@ -253,3 +261,6 @@ def gen_topology_for_simulator(topo_spec: TopoSpec):
 
 def device_name(task_id, index):
     return "/job:worker/replica:0/task:{}/device:GPU:{}".format(task_id, index)
+
+def load_prof_data(model_name, gtype):
+    pass

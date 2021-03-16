@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from typing import Any
 import numpy as np
 import time
 import tensorflow as tf
@@ -6,7 +8,7 @@ from data import get_all_data
 from model import Model
 from environment import sample_logits, evaluate_with_feedback, score, invalidity, sample_and_evaluate_with_feedback
 from utils import save, load, info
-from baseline import gen_baselines, eval_baselines
+from baseline import gen_baselines, eval_baselines, random_cross_node, random_shuffle_node, Trace
 
 from multiprocessing import Pool
 pool = Pool(8)
@@ -58,9 +60,9 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00001, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00005, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
     L2_regularization_factor = 0 #.00001
-    similarity_factor = .1
+    similarity_regularization_factor = 0 # .02
 
     for epoch in range(20000):
         record_id = np.random.randint(len(records))
@@ -77,47 +79,76 @@ with tf.device("/gpu:0"):
 
         record['nvisits'] += 1
 
-        if 'exp' not in record:
-            record['exp'] = []
+        if 'traces' not in record:
+            record['traces'] = []
+            for _ in range(10): # TODO: concurrent
+                t = Trace(*random_cross_node(record, *((b.nodemask, b.ncclmask, b.psmask) for b in record['baselines'])))
+                t.evaluate_with_feedback(record)
+                record['traces'].append(t)
 
         model.set_graph(record["graph"])
 
-        b = np.random.choice(record['baselines'])
-        features = prepare_features(record, b.nodemask, np.array(b.ncclmask), b.psmask, b.feedback)
+        trace = record['traces'][np.random.randint(len(record['traces']))]
+        features = prepare_features(record, trace.nodemask, trace.ncclmask, trace.psmask, trace.feedback)
 
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
             nodelogit, nccllogit = model(features, training=True)
 
-            rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(64)])
-            loss = 0
+            if trace.next == None or np.random.rand() < .05:
+                best_similarity = 0
+                for t in record['traces']:
+                    if t.score < trace.score:
+                        similarity = trace.similarity(t)
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            trace.next = t
+                if trace.next == None:
+                    continue
 
-            # np.set_printoptions(threshold=99999)
-            # info(rs[0][0])
+            if record['nvisits'] % 20 == 0: # make more traces
+                rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(64)])
 
-            # evaluate_with_feedback(record, sample_logits(nodelogit), sample_logits(nccllogit), None, trace=True)
+                # np.set_printoptions(threshold=99999)
+                # info(rs[0][0])
 
-            # score loss
-            base = min(b.score for b in record['baselines'])
-            mean = sum(score for _, _, score, _ in rs) / len(rs)
-            for nodemask, ncclmask, loss_env, feedback in rs:
-                normalized_loss = (loss_env - mean) / base
-                loss += normalized_loss * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(nodemask.astype(np.float32), nodelogit))
-                loss += normalized_loss * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(ncclmask.astype(np.float32), nccllogit))
-            loss /= len(rs)
+                for nodemask, ncclmask, score, feedback in rs:
+                    if score < trace.score:
+                        record['traces'].append(Trace(nodemask, ncclmask, [0] * nodemask.shape[0], score, feedback))
+
+                # We need to restrict to crossover between only several traces, not all
+                # for _ in range(10):
+                #     t = Trace(*random_cross_node(record, *((tt.nodemask, tt.ncclmask, tt.psmask) for tt in record['traces'])))
+                #     t.evaluate_with_feedback(record)
+                #     if t.score < trace.score:
+                #         record['traces'].append(t)
+
+                for _ in range(4):
+                    t = Trace(*random_shuffle_node(record, trace.nodemask, trace.ncclmask, trace.psmask))
+                    t.evaluate_with_feedback(record)
+                    if t.score < trace.score:
+                        record['traces'].append(t)
+
+            # objective
+            loss = (
+                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(trace.next.nodemask.astype(np.float32), nodelogit)) +
+                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(trace.next.ncclmask).astype(np.float32), nccllogit))
+            )
 
             # similarity loss: we want the new strategy somewhat similar to the old one
-            # loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(b.nodemask.astype(np.float32), nodelogit))
-            # loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(b.ncclmask).astype(np.float32), nccllogit))
+            if similarity_regularization_factor > 0:
+                loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(b.nodemask.astype(np.float32), nodelogit))
+                loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(b.ncclmask).astype(np.float32), nccllogit))
 
-            # regularization loss
+            # L2 regularization loss
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:
                     loss += L2_regularization_factor * tf.nn.l2_loss(weight)
 
-            info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], min(score for _, _, score, _ in rs))
+            # info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], trace.next.score)
+            info(record_id, loss)
 
-            grads = tape.gradient(-loss, model.trainable_weights)
+            grads = tape.gradient(loss, model.trainable_weights)
             # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 

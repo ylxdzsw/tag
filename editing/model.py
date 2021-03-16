@@ -36,7 +36,8 @@ class GConv(tf.keras.layers.Layer):
         device_dst = tf.math.add_n(device_dst) / len(device_dst)
 
         # return self.activation(op_feats + op_dst), self.activation(device_feats + device_dst)
-        return self.activation(op_dst), self.activation(device_dst)
+        return tf.concat([op_feats, self.activation(op_dst)], axis=1), tf.concat([device_feats, self.activation(device_dst)], axis=1)
+        # return self.activation(op_dst), self.activation(device_dst)
 
 class Model(tf.keras.Model):
     def __init__(self):
@@ -50,9 +51,9 @@ class Model(tf.keras.Model):
         self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.nn.elu) for etype in all_etypes }
 
         self.gconv_layers = [
-            GConv(node_hidden, tf.nn.elu),
-            GConv(node_hidden, tf.nn.elu),
-            GConv(node_hidden, tf.nn.elu),
+            # GConv(node_hidden, tf.nn.elu),
+            # GConv(node_hidden, tf.nn.elu),
+            # GConv(node_hidden, tf.nn.elu),
             GConv(node_hidden, tf.nn.elu) #tf.identity)
         ]
 

@@ -10,7 +10,7 @@ class BaseLine:
     nodemask: Any = None
     ncclmask: Any = None
     psmask: Any = None
-    score: Any = None
+    score: int = 0
     invalidity: int = 0
     feedback: Any = None
 
@@ -58,3 +58,44 @@ def eval_baselines(record, baselines):
         b.score = score
         b.invalidity = invalidity(record, feedback)
         b.feedback = feedback
+
+def random_cross_node(record, *strategies):
+    n = len(record['gdef'].node)
+    m = len(record['devices'])
+
+    result_nodemask = np.ones((n, m), dtype=np.int)
+    result_ncclmask = [0] * n
+    result_psmask = [0] * n
+
+    for i in range(n):
+        j = np.random.randint(len(strategies))
+        nodemask, ncclmask, psmask = strategies[j]
+        result_nodemask[i, :] = nodemask[i, :]
+        result_ncclmask[i] = ncclmask[i]
+        result_psmask[i] = psmask[i]
+
+    return result_nodemask, result_ncclmask, result_psmask
+
+def random_shuffle_node(record, nodemask, ncclmask, psmask):
+    indexes = np.arange(len(record['gdef'].node))
+    np.random.shuffle(indexes)
+    return nodemask[indexes, :], np.array(ncclmask)[indexes], np.array(psmask)[indexes]
+
+@dataclass
+class Trace:
+    nodemask: Any
+    ncclmask: Any
+    psmask: Any
+    score: int = 0
+    feedback: Any = None
+    next: Any = None
+
+    def evaluate_with_feedback(self, record):
+        self.score, self.feedback = evaluate_with_feedback(record, self.nodemask, self.ncclmask, self.psmask)
+
+    def similarity(self, trace):
+        return (
+            float(np.sum(self.nodemask == trace.nodemask)) +
+            float(np.sum(np.array(self.ncclmask) == np.array(trace.ncclmask))) +
+            float(0.5 * np.sum(np.array(self.psmask) == np.array(trace.psmask)))
+        )

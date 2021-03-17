@@ -24,10 +24,21 @@ except:
 def prepare_features(record, nodemask, ncclmask, psmask, feedback):
     CL2, Bmax = record['scaler']
 
+    op_feedbacks = []
+    for node in record['gdef'].node:
+        # if node.name not in feedback['op_makespan'] or node.name not in feedback['op_idle_after']:
+            # info(node.name)
+
+        op_feedbacks.append([
+            feedback['op_makespan'].get(node.name, 0) / CL2, # the ratio of makespan and computation time?
+            feedback['op_idle_after'].get(node.name, 0) / CL2,
+        ])
+
     op_feats = np.hstack((
         record["op_feats"],
         np.reshape(ncclmask, (-1, 1)),
-        np.reshape(feedback['leftout'], (-1, 1))
+        np.reshape(feedback['leftout'], (-1, 1)),
+        op_feedbacks
     ))
     device_feats = np.hstack((
         record["device_feats"],
@@ -48,8 +59,6 @@ def prepare_features(record, nodemask, ncclmask, psmask, feedback):
     ))
 
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
-
-# def rollout():
 
 with tf.device("/gpu:0"):
     model = Model()
@@ -116,12 +125,11 @@ with tf.device("/gpu:0"):
                     if score < trace.score:
                         record['traces'].append(Trace(nodemask, ncclmask, [0] * nodemask.shape[0], score, feedback))
 
-                # We need to restrict to crossover between only several traces, not all
-                # for _ in range(10):
-                #     t = Trace(*random_cross_node(record, *((tt.nodemask, tt.ncclmask, tt.psmask) for tt in record['traces'])))
-                #     t.evaluate_with_feedback(record)
-                #     if t.score < trace.score:
-                #         record['traces'].append(t)
+                for _ in range(10):
+                    t = Trace(*random_cross_node(record, *((tt.nodemask, tt.ncclmask, tt.psmask) for tt in record['traces'][-4:])))
+                    t.evaluate_with_feedback(record)
+                    if t.score < trace.score:
+                        record['traces'].append(t)
 
                 for _ in range(4):
                     t = Trace(*random_shuffle_node(record, trace.nodemask, trace.ncclmask, trace.psmask))

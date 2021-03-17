@@ -43,18 +43,18 @@ class Model(tf.keras.Model):
     def __init__(self):
         super(Model, self).__init__()
 
-        node_hidden = 256
-        edge_hidden = 16
+        node_hidden = 256*4
+        edge_hidden = 16*4
 
-        self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.elu)
-        self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.elu)
-        self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.nn.elu) for etype in all_etypes }
+        self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.nn.sigmoid) for etype in all_etypes }
 
         self.gconv_layers = [
-            # GConv(node_hidden, tf.nn.elu),
-            # GConv(node_hidden, tf.nn.elu),
-            # GConv(node_hidden, tf.nn.elu),
-            GConv(node_hidden, tf.nn.elu) #tf.identity)
+            # GConv(node_hidden, tf.nn.sigmoid),
+            # GConv(node_hidden, tf.nn.sigmoid),
+            # GConv(node_hidden, tf.nn.sigmoid),
+            GConv(node_hidden, tf.nn.sigmoid) #tf.identity)
         ]
 
         self.final_place = tf.keras.layers.Dense(1, activation=None)

@@ -1,9 +1,8 @@
 use oh_my_rust::*;
 use serde_json::json;
-use core::{convert::TryInto, fmt::Write};
+use core::{cmp, convert::TryInto, fmt::Write};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque, HashMap};
 use std::sync::{Arc, Mutex};
-use core::cmp;
 use crate::misc::{Target, Profiler};
 use crate::graph::Form;
 use crate::proto::types::DataType;
@@ -304,6 +303,41 @@ impl Simulator for SimpleSimulator {
     }
 
     fn dump_records<W: std::io::Write>(&self, output: &mut W) {
+        /*****
+        * op *
+        *****/
+        let mut op_makespan: BTreeMap<&str, [u64; 2]> = BTreeMap::new();
+        for (&task_id, node) in self.task_dict.iter().zip(self.target.pb.node.iter()) {
+            let task = &self.tasks[task_id];
+            if let Some(raw_node_name) = node.attr.get("_tge_origin").or_else(|| node.attr.get("_tge_belong_to")) {
+                let raw_node_name = core::str::from_utf8(raw_node_name.get_s()).expect("_tge_origin or _tge_belong_to is not a name");
+                let makespan = op_makespan.entry(raw_node_name).or_insert([core::u64::MAX, core::u64::MIN]);
+                makespan[0] = cmp::min(makespan[0], task.eft - task.duration);
+                makespan[1] = cmp::max(makespan[1], task.eft);
+            }
+        }
+
+        let mut op_idle_after: BTreeMap<&str, u64> = BTreeMap::new();
+        for (&task_id, node) in self.task_dict.iter().zip(self.target.pb.node.iter()) {
+            let task = &self.tasks[task_id];
+            if let Some(raw_node_name) = node.attr.get("_tge_origin").or_else(|| node.attr.get("_tge_belong_to")) {
+                let raw_node_name = core::str::from_utf8(raw_node_name.get_s()).expect("_tge_origin or _tge_belong_to is not a name");
+                let idle_time = op_idle_after.entry(raw_node_name).or_insert(core::u64::MAX);
+                if task.notify.is_empty() {
+                    *idle_time = 0;
+                    continue
+                }
+
+                for &next_task_id in &task.notify {
+                    let next_task = &self.tasks[next_task_id];
+                    *idle_time = cmp::min(*idle_time, next_task.eft - next_task.duration - task.eft)
+                }
+            }
+        }
+
+        /*********
+        * device *
+        *********/
         let mut device_busy_time = vec![0; self.target.ndev()]; // note that each device can only run a single node at a time, so the busy time is simply the sum of all computation nodes
         for task in self.tasks.iter() {
             if let TaskType::Computation { gpu, .. } = &task.content {
@@ -316,9 +350,12 @@ impl Simulator for SimpleSimulator {
         let device_peak_memory = self.max_memory.clone();
 
         serde_json::to_writer(output, &json!({
+            "op_makespan": op_makespan.iter().map(|(k, [start, end])| (k, end - start)).collect::<BTreeMap<_, _>>(),
+            "op_idle_after": op_idle_after,
+
             "device_busy_time": device_busy_time,
             "device_total_utilization": device_total_utilization,
-            "device_peak_memory": device_peak_memory
+            "device_peak_memory": device_peak_memory,
         })).expect("fail to write log");
     }
 }

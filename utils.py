@@ -54,7 +54,7 @@ def group_around_topk_costs(gdef, groups, cost, k):
     # cores are the largest cost node in each group, which are used to represent the whole group. Centers are topk cores.
     # cost is a function form node name to its cost, typically prof_data[x]
 
-    groups = { gdef.node[i].name: id for i, id in enumerate(groups) } # node -> group
+    groups = { gdef.node[i].name: group_id for group_id, node_ids in enumerate(groups) for i in node_ids } # node name -> group id
     cores = {} # group -> core node
     for node, group in groups.items():
         if group not in cores or cost(cores[group]) < cost(node):
@@ -97,7 +97,7 @@ def group_around_topk_costs(gdef, groups, cost, k):
             id += 1
         result.append(new_id[new_group])
 
-    return result
+    return list(groupby(enumerate(result), key=cadr, value=car).values())
 
 def save(var, file):
     import pickle

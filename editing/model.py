@@ -43,8 +43,8 @@ class Model(tf.keras.Model):
     def __init__(self):
         super(Model, self).__init__()
 
-        node_hidden = 256*4
-        edge_hidden = 16*4
+        node_hidden = 1024
+        edge_hidden = 64
 
         self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
         self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)

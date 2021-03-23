@@ -69,7 +69,7 @@ with tf.device("/gpu:0"):
     except:
         info("no saved weight")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=.00005, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
+    optimizer = tf.keras.optimizers.Adam(learning_rate=.00006, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
     L2_regularization_factor = 0 #.00001
     similarity_regularization_factor = 0 # .02
 
@@ -82,6 +82,8 @@ with tf.device("/gpu:0"):
             eval_baselines(record, baselines)
             record['baselines'] = baselines
             save(records, "records")
+
+        continue
 
         if 'nvisits' not in record:
             record['nvisits'] = 0

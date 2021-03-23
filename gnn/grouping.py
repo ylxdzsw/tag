@@ -67,8 +67,8 @@ def group_with_k_spanning_tree(gdef, base_groups, tensor_sizes, sinks, n_groups=
 def group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20):
     from utils import group_around_topk_costs
 
-    id_list = group_around_topk_costs(gdef, base_groups, lambda x: prof_data[x], n_groups-1)
-    return list(groupby(enumerate(id_list), key=cadr, value=car).values())
+    cache = prof_data.get('1080ti', prof_data.maximum_batchsize())
+    return group_around_topk_costs(gdef, base_groups, lambda x: cache[x], n_groups-1)
 
 def group_with_topk_layers(gdef, base_groups, prof_data, n_groups=20):
     pass
@@ -81,11 +81,11 @@ def group_with_metis(gdef, base_groups, prof_data, n_groups=20):
     groups = list(groupby(enumerate(id_list), key=cadr, value=car).values())
     return compose(groups, base_groups)
 
-def group_with_tge_basegroups():
+def group_with_tge_basegroups(gdef):
     from tge import TGE
 
-    base_groups = TGE(gdef, devices).get_groups()
-    pass # re format
+    base_groups = TGE(gdef, []).get_groups()
+    return list(groupby(enumerate(base_groups), key=cadr, value=car).values())
 
 # intersection of two grouping. Two nodes are in the same group if they are in the same group in either grouping scheme.
 def compose(a, b):

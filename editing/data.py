@@ -2,14 +2,17 @@ from dataclasses import dataclass
 
 import dgl
 import re
+import os
 import numpy as np
 import pickle
 import math
 import itertools
 import networkx as nx
 import tge
+from bisect import bisect_left
 from utils import groupby, car, cadr, cdr, info, load, parse_input, get_input_size
 from metis import metis
+from grouping import group_with_topk_nodes, group_with_tge_basegroups
 
 @dataclass
 class TopoSpec:
@@ -19,6 +22,9 @@ class TopoSpec:
     @property
     def ntasks(self):
         return len(self.tasks)
+
+    def devices(self):
+        return ( (device_name(task_id, i), gpu_model, memory)  for task_id, task in enumerate(self.tasks) for i in range(task.number) )
 
 @dataclass
 class TopoSpecTask:
@@ -72,11 +78,10 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             if node.op.startswith('Apply') and input_index == 0: # this input is a variable tensor
                 parameter_sizes[nodeid] = tensorsize
         for device_id, (_, task_id) in enumerate(devices):
-            pdata = prof_data[topo_spec.tasks[task_id].gpu_model]
-            computation_times[thisnodeid, device_id, 0] += pdata[(node.name, 1)][0]
-            computation_times[thisnodeid, device_id, 1] += pdata[(node.name, 2)][0]
-            computation_times[thisnodeid, device_id, 2] += pdata[(node.name, 4)][0]
-            computation_times[thisnodeid, device_id, 3] += pdata[(node.name, 8)][0]
+            computation_times[thisnodeid, device_id, 0] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize)[node.name]
+            computation_times[thisnodeid, device_id, 1] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 2)[node.name]
+            computation_times[thisnodeid, device_id, 2] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 4)[node.name]
+            computation_times[thisnodeid, device_id, 3] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 8)[node.name]
 
     op_feats = np.array([[np.mean(computation_times[i, :, x]) for x in range(4)] + [parameter_sizes[i], tensor_sizes[i, i]] for i in range(n_op)], dtype=float)
     tensor_feats = []
@@ -108,10 +113,8 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     tensor_feats = np.array(tensor_feats, dtype=float)
     place_feats = np.array(place_feats, dtype=float)
 
-    prof_data_combined = { key: [] for key in prof_data[topo_spec.tasks[0].gpu_model].keys() }
-    for _, task_id in devices:
-        for key, times in prof_data[topo_spec.tasks[task_id].gpu_model].items():
-            prof_data_combined[key].append(times[0])
+    base_groups = group_with_tge_basegroups(gdef)
+    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20)
 
     g = dgl.heterograph({
         ('device', 'link', 'device'): edge_link,
@@ -141,9 +144,10 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     return {
         "graph": g,
         "gdef": gdef,
-        "prof_data": prof_data_combined,
+        "prof_data": prof_data,
         "topo_spec": topo_spec,
         "devices": devices,
+        "groups": groups,
         "op_feats": op_feats,
         "device_feats": device_feats,
         "tensor_feats": tensor_feats,
@@ -156,65 +160,28 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     }
 
 def get_all_data():
-    models = []
-    for m in ("inception", "vgg"): # "resnet", "vgg", "transformer", "bert",  "mobilenet", "nasnet"
-        agg_prof_data = {}
-        gdef, batchsize = None, None
-        for gtype in ('1080ti', 'v100'):
-            gdef, prof_data, _, batchsize = load("{}_{}.pickle".format(m, gtype))
-            agg_prof_data[gtype] = prof_data
+    records = []
+
+    real_topo = TopoSpec([
+        TopoSpecTask('1080ti', 6<<30, 5000, 2),
+        TopoSpecTask('1080ti', 6<<30, 5000, 2),
+        TopoSpecTask('v100',   8<<30, 5000, 4),
+    ], [[2810, 2810, 2810],
+        [2810, 2810, 2810],
+        [2810, 2810, 2810]])
+
+    for m in ("inception", "resnet", "vgg", "transformer", "bert", "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
+        gdef = load('raw_data/{}/model.pickle'.format(m))
+        prof_data = ProfileData(m)
         tge.simplify_graph(gdef, sinks=["Adam"])
-        models.append((gdef, agg_prof_data, batchsize))
 
-    topos0 = [TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('v100',   8<<30, intra, 4),
-    ], [[28100, 28100, 28100],
-        [28100, 28100, 28100],
-        [28100, 28100, 28100]]) for intra in (80000, 200000)]
+        model_size = estimate_model_size(gdef, prof_data.maximum_batchsize())
+        for _ in range(6):
+            topo = gen_random_topology(model_size)
+            records.append(gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo))
+        records.append(gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo))
 
-    topos1 = [TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('v100',   8<<30, intra, 4),
-    ], [[2810, 2810, 2810],
-        [2810, 2810, 2810],
-        [2810, 2810, 2810]]) for intra in (8000, 20000)]
-
-    topos2 = [TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('1080ti', 6<<30, intra, 1),
-        TopoSpecTask('v100',   8<<30, intra, 2),
-    ], [[2810, 2810, 2810],
-        [2810, 2810, 2810],
-        [2810, 2810, 2810]]) for intra in (8000, 20000)]
-
-    topos3 = [TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('1080ti', 6<<30, intra, 2),
-        TopoSpecTask('v100',   8<<30, intra, 2),
-    ], [[2810, 2810, 400],
-        [2810, 2810, 400],
-        [400, 400, 2810]]) for intra in (8000, 20000)]
-
-    topos4 = [TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, 8000, 4),
-        TopoSpecTask('1080ti', 6<<30, 8000, 4),
-    ], [[2810,2810],
-        [2810,2810]]),
-    TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-        TopoSpecTask('1080ti', 6<<30, 8000, 1),
-    ], [[2810] * 8] * 8)]
-
-    return [gen_data(gdef, prof_data, batchsize, topo_spec) for gdef, prof_data, batchsize in models for topo_spec in [topos0[1],topos1[1],topos2[1]]]
+    return records
 
 def gen_nccl_model(topo_spec: TopoSpec):
     # TGE automatically use only the leader (first device) to determin the nccl model to use when no exact model present
@@ -262,5 +229,104 @@ def gen_topology_for_simulator(topo_spec: TopoSpec):
 def device_name(task_id, index):
     return "/job:worker/replica:0/task:{}/device:GPU:{}".format(task_id, index)
 
-def load_prof_data(model_name, gtype):
-    pass
+def gen_random_topology(model_size):
+    total_memory = 0
+
+    gpu_models = ('1080ti', 'v100')
+    gpu_memory = {
+        '1080ti': 6<<30,
+        'v100': 8<<30
+    }
+    intra_links = (5000, 50000) # PCI, nvlink
+    inter_links = (2810, 8000, 25000)
+    card_numbers = (1, 2, 4)
+
+    tasks = []
+    for _ in range(8): # at most 8 tasks
+        if sum(t.number for t in tasks) >= 2 and total_memory > model_size*1.5 and np.random.rand() < .5:
+            break
+
+        gpu_model = np.random.choice(gpu_models)
+        memory = gpu_memory[gpu_model]
+        card_number = np.random.choice(card_numbers)
+        intra_bandwidth = np.random.choice(intra_links)
+        task = TopoSpecTask(gpu_model, memory, intra_bandwidth, card_number)
+
+        total_memory += card_number * memory
+        tasks.append(task)
+
+    n = len(tasks)
+    inter_bandwidth = [ [0 for _ in range(n)] for _ in range(n) ]
+    for i in range(n):
+        for j in range(i+1):
+            bandwidth = np.random.choice(inter_links)
+            inter_bandwidth[i][j] = bandwidth
+            inter_bandwidth[j][i] = bandwidth
+
+    return TopoSpec(tasks, inter_bandwidth)
+
+def estimate_model_size(gdef, batchsize):
+    parameter_sizes = [0 for _ in range(len(gdef.node))]
+    name_dict = { node.name: i for i, node in enumerate(gdef.node) }
+    for node in gdef.node:
+        for input in node.input:
+            x, input_index = parse_input(input)
+            if node.op.startswith('Apply') and input_index == 0: # this input is a variable tensor
+                nodeid = name_dict[x]
+                parameter_sizes[nodeid] = get_input_size(gdef.node[nodeid], input_index, batchsize)
+    return sum(parameter_sizes) * 4
+
+class ProfileData:
+    ALL_GTYPES = ('1080ti', 'v100')
+
+    def __init__(self, model_name):
+        self.data = {}
+        for gtype in ProfileData.ALL_GTYPES:
+            files = os.listdir('raw_data/{}/{}'.format(model_name, gtype))
+            self.batch_sizes = sorted([ int(x.split('.')[0]) for x in files ])
+            self.data[gtype] = {}
+            for b in self.batch_sizes:
+                self.data[gtype][b] = load('raw_data/{}/{}/{}.pickle'.format(model_name, gtype, b))
+
+    def maximum_batchsize(self):
+        return self.batch_sizes[-1]
+
+    # use the 2 nearest points to fit a linear model
+    def linear_fit(self, target):
+        for gtype in self.data:
+            i = bisect_left(self.batch_sizes, target)
+            if i >= len(self.batch_sizes):
+                i -= 1
+            elif i == 0:
+                i += 1
+            x1, x2 = self.batch_sizes[i-1], self.batch_sizes[i]
+            fitted = {}
+            for key in self.data[gtype][x1]:
+                y1, y2 = self.data[gtype][x1][key], self.data[gtype][x2][key]
+                predicted = y2 * (target - x1) / (x2 - x1) + y1 * (x2 - target) / (x2 - x1)
+                fitted[key] = int(max(predicted, 0))
+            self.data[gtype][target] = fitted
+
+    def get(self, gtype, batch_size):
+        if batch_size not in self.data[gtype]:
+            self.linear_fit(batch_size)
+        return self.data[gtype][batch_size]
+
+    def to_tge_single(self, gtype, target, nrep):
+        result = {}
+        for i in range(1, nrep):
+            if target % i == 0:
+                p = self.get(gtype, target // i)
+                for x in p:
+                    result[(x, i)] = p[x]
+        return result
+
+    def to_tge(self, topo_spec, batch_size):
+        gtypes = [ gtype for name, gtype, memory in topo_spec.devices() ]
+        nrep = len(gtypes)*2
+        cache = { gtype: self.to_tge_single(gtype, batch_size, nrep) for gtype in ProfileData.ALL_GTYPES }
+        result = {}
+        for key in cache[gtypes[0]]:
+            result[key] = [ cache[gtype] for gtype in gtypes ]
+
+        return result

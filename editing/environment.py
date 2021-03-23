@@ -22,7 +22,7 @@ def sample_and_evaluate_with_feedback(pack):
     ncclmask = sample_logits(nccllogit)
     return (nodemask, ncclmask, *evaluate_with_feedback(record, nodemask, ncclmask, None))
 
-def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=False):
+def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=""):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
     strategy = {}
@@ -42,13 +42,8 @@ def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=False):
     tge.set_topology(*record["topology_for_simulator"])
     tge.set_nccl_model(record["nccl_models"])
 
-    if trace:
-        chrome_path = "trace.json"
-    else:
-        chrome_path = ""
-
     temp_path = tempfile.mktemp()
-    time, mem = tge.evaluate(record["prof_data"], chrome_path=chrome_path, dump_path=temp_path)
+    time, mem = tge.evaluate(record["prof_data"].to_tge(record["topo_spec"], record["batchsize"]), chrome_path=trace, dump_path=temp_path)
     feedback = parse_feedback(temp_path)
     feedback["peak_memory"] = mem
     feedback["leftout"] = list((np.sum(nodemask, axis=1) == 0).astype(int))

@@ -83,8 +83,6 @@ with tf.device("/gpu:0"):
             record['baselines'] = baselines
             save(records, "records")
 
-        continue
-
         if 'nvisits' not in record:
             record['nvisits'] = 0
 
@@ -102,65 +100,69 @@ with tf.device("/gpu:0"):
         trace = record['traces'][np.random.randint(len(record['traces']))]
         features = prepare_features(record, trace.nodemask, trace.ncclmask, trace.psmask, trace.feedback)
 
-        with tf.GradientTape() as tape:
-            tape.watch(model.trainable_weights)
-            nodelogit, nccllogit = model(features, training=True)
+        nodelogit, nccllogit = model(features, training=False)
+        rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(1024)])
 
-            if trace.next == None or np.random.rand() < .05:
-                best_similarity = 0
-                for t in record['traces']:
-                    if t.score < trace.score:
-                        similarity = trace.similarity(t)
-                        if similarity > best_similarity:
-                            best_similarity = similarity
-                            trace.next = t
-                if trace.next == None:
-                    continue
+        positive = 0
+        for nodemask, ncclmask, score, feedback in rs:
+            if score < record['traces'][-1].score:
+                record['traces'].append(Trace(nodemask, ncclmask, [0] * nodemask.shape[0], score, feedback))
+            if score < trace.score:
+                positive += 1
+        info("positive: ", positive)
+        if positive == 0 and len(record['traces']) < 20:
+            for nodemask, ncclmask, score, feedback in rs:
+                record['traces'].append(Trace(nodemask, ncclmask, [0] * nodemask.shape[0], score, feedback))
+        if positive <= 24 or positive >= 1000:
+            continue
 
-            if record['nvisits'] % 20 == 0: # make more traces
-                rs = pool.map(sample_and_evaluate_with_feedback, [(record, nodelogit, nccllogit) for _ in range(64)])
+        examples = []
+        for nodemask, ncclmask, score, feedback in rs:
+            log_p = (
+                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(nodemask).astype(np.float32), nodelogit)) +
+                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(ncclmask).astype(np.float32), nccllogit))
+            ).numpy()
+            examples.append((log_p, nodemask, ncclmask, score))
 
-                # np.set_printoptions(threshold=99999)
-                # info(rs[0][0])
+        for _ in range(16):
+            with tf.GradientTape() as tape:
+                tape.watch(model.trainable_weights)
+                nodelogit, nccllogit = model(features, training=True)
 
-                for nodemask, ncclmask, score, feedback in rs:
-                    if score < trace.score:
-                        record['traces'].append(Trace(nodemask, ncclmask, [0] * nodemask.shape[0], score, feedback))
+                # objective
+                loss = 0
+                in_trusted_range = 0
+                for log_p, nodemask, ncclmask, score in examples:
+                    new_log_p = (
+                        tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(nodemask).astype(np.float32), nodelogit)) +
+                        tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(ncclmask).astype(np.float32), nccllogit))
+                    )
+                    L = -1 if score < trace.score else 1
+                    ratio = tf.exp(new_log_p - log_p)
+                    if 0.9 < ratio.numpy() < 1.1:
+                        in_trusted_range += 1
+                        loss += L * ratio
+                if in_trusted_range > len(examples) / 2:
+                    loss /= in_trusted_range
+                else:
+                    break
 
-                for _ in range(10):
-                    t = Trace(*random_cross_node(record, *((tt.nodemask, tt.ncclmask, tt.psmask) for tt in record['traces'][-4:])))
-                    t.evaluate_with_feedback(record)
-                    if t.score < trace.score:
-                        record['traces'].append(t)
+                # similarity loss: we want the new strategy somewhat similar to the old one
+                if similarity_regularization_factor > 0:
+                    loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(b.nodemask.astype(np.float32), nodelogit))
+                    loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(b.ncclmask).astype(np.float32), nccllogit))
 
-                for _ in range(4):
-                    t = Trace(*random_shuffle_node(record, trace.nodemask, trace.ncclmask, trace.psmask))
-                    t.evaluate_with_feedback(record)
-                    if t.score < trace.score:
-                        record['traces'].append(t)
+                # L2 regularization loss
+                if L2_regularization_factor > 0:
+                    for weight in model.trainable_weights:
+                        loss += L2_regularization_factor * tf.nn.l2_loss(weight)
 
-            # objective
-            loss = (
-                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(trace.next.nodemask.astype(np.float32), nodelogit)) +
-                tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(trace.next.ncclmask).astype(np.float32), nccllogit))
-            )
+                # info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], trace.next.score)
+                # info(record_id, loss)
 
-            # similarity loss: we want the new strategy somewhat similar to the old one
-            if similarity_regularization_factor > 0:
-                loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(b.nodemask.astype(np.float32), nodelogit))
-                loss += similarity_factor / np.sqrt(record['nvisits']) * tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(np.array(b.ncclmask).astype(np.float32), nccllogit))
-
-            # L2 regularization loss
-            if L2_regularization_factor > 0:
-                for weight in model.trainable_weights:
-                    loss += L2_regularization_factor * tf.nn.l2_loss(weight)
-
-            # info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], trace.next.score)
-            info(record_id, loss)
-
-            grads = tape.gradient(loss, model.trainable_weights)
-            # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])
-            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+                grads = tape.gradient(loss, model.trainable_weights)
+                # info([tf.reduce_mean(tf.abs(grad)).numpy() for grad in grads])
+                optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
         # checkpoint
         if epoch % 20 == 0:

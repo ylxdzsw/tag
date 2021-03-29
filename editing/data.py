@@ -24,7 +24,7 @@ class TopoSpec:
         return len(self.tasks)
 
     def devices(self):
-        return ( (device_name(task_id, i), gpu_model, memory)  for task_id, task in enumerate(self.tasks) for i in range(task.number) )
+        return ( (device_name(task_id, i), task.gpu_model, task.memory) for task_id, task in enumerate(self.tasks) for i in range(task.number) )
 
 @dataclass
 class TopoSpecTask:
@@ -170,13 +170,13 @@ def get_all_data():
         [2810, 2810, 2810],
         [2810, 2810, 2810]])
 
-    for m in ("inception", "resnet", "vgg", "transformer", "bert", "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
+    for m in ("inception", ): # ("inception", "resnet", "vgg", "transformer", "bert", "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
         gdef = load('raw_data/{}/model.pickle'.format(m))
         prof_data = ProfileData(m)
         tge.simplify_graph(gdef, sinks=["Adam"])
 
         model_size = estimate_model_size(gdef, prof_data.maximum_batchsize())
-        for _ in range(6):
+        for _ in range(16):
             topo = gen_random_topology(model_size)
             records.append(gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo))
         records.append(gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo))
@@ -234,8 +234,8 @@ def gen_random_topology(model_size):
 
     gpu_models = ('1080ti', 'v100')
     gpu_memory = {
-        '1080ti': 6<<30,
-        'v100': 8<<30
+        '1080ti': 6<<28,#6<<30,
+        'v100': 8<<28,#8<<30
     }
     intra_links = (5000, 50000) # PCI, nvlink
     inter_links = (2810, 8000, 25000)
@@ -314,7 +314,7 @@ class ProfileData:
 
     def to_tge_single(self, gtype, target, nrep):
         result = {}
-        for i in range(1, nrep):
+        for i in range(1, nrep+1):
             if target % i == 0:
                 p = self.get(gtype, target // i)
                 for x in p:
@@ -323,10 +323,10 @@ class ProfileData:
 
     def to_tge(self, topo_spec, batch_size):
         gtypes = [ gtype for name, gtype, memory in topo_spec.devices() ]
-        nrep = len(gtypes)*2
+        nrep = len(gtypes)
         cache = { gtype: self.to_tge_single(gtype, batch_size, nrep) for gtype in ProfileData.ALL_GTYPES }
         result = {}
         for key in cache[gtypes[0]]:
-            result[key] = [ cache[gtype] for gtype in gtypes ]
+            result[key] = [ cache[gtype][key] for gtype in gtypes ]
 
         return result

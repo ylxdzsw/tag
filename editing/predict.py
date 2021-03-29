@@ -15,8 +15,8 @@ with tf.device("/gpu:1"):
     model.load_weights('weights')
 
     for record in records:
-        scores = sorted([b.score for b in record['baselines']])
-        info(int((scores[1] / scores[0] - 1) * 1000) / 10)
+        info([("*" if b.invalidity > 0 else "") + str(b.score) for b in record['baselines']], record['traces'][-1].score)
+        # scores = sorted([b.score for b in record['baselines']])
 
     raise SystemExit()
 

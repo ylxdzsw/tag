@@ -88,7 +88,6 @@ class Trace:
     psmask: Any
     score: int = 0
     feedback: Any = None
-    next: Any = None
 
     def evaluate_with_feedback(self, record):
         self.score, self.feedback = evaluate_with_feedback(record, self.nodemask, self.ncclmask, self.psmask)

@@ -7,7 +7,7 @@ import tempfile
 import os
 import json
 
-def sample_logits(logit, e=0):
+def sample_logits(logit, e=.02):
     p = tf.math.sigmoid(logit)
     def f(x):
         if np.random.rand() < e:

@@ -26,11 +26,15 @@ def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=""):
     gdef = record["gdef"]
     # replication_number_feasibility_rounding(record, nodemask)
     strategy = {}
-    for node_id in range(len(gdef.node)):
-        s = [0 if int(ncclmask[node_id]) == 0 else int(ncclmask[node_id])]
+    for sid in range(nodemask.shape[0]):
+        s = [0 if int(ncclmask[sid]) == 0 else int(ncclmask[sid])]
         for i in range(nodemask.shape[1]):
-            s.append(int(nodemask[node_id, i]))
-        strategy[gdef.node[node_id].name] = s
+            s.append(int(nodemask[sid, i]))
+        if "groups" in record:
+            for node_id in record["groups"][sid]:
+                strategy[gdef.node[node_id].name] = s
+        else:
+            strategy[gdef.node[sid].name] = s
     # info(strategy)
     for k, v in strategy.items():
         if np.sum(v[1:]) == 0:
@@ -46,7 +50,10 @@ def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=""):
     time, mem = tge.evaluate(record["prof_data"].to_tge(record["topo_spec"], record["batchsize"]), chrome_path=trace, dump_path=temp_path)
     feedback = parse_feedback(temp_path)
     feedback["peak_memory"] = mem
-    feedback["leftout"] = list((np.sum(nodemask, axis=1) == 0).astype(int))
+    if "groups" in record:
+        feedback["leftout"] = list(np.repeat((np.sum(nodemask, axis=1) == 0).astype(int), [len(x) for x in record['groups']]))
+    else:
+        feedback["leftout"] = list((np.sum(nodemask, axis=1) == 0).astype(int))
     os.remove(temp_path)
 
     return score(record, time, feedback), feedback

@@ -130,8 +130,11 @@ class Model(tf.keras.Model):
         edge_hidden = 64
 
         self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.op_normalizer = tf.keras.layers.BatchNormalization()
         self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.device_normalizer = tf.keras.layers.BatchNormalization()
         self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.nn.sigmoid) for etype in all_etypes }
+        self.edge_normalizers = { etype: tf.keras.layers.BatchNormalization() for etype in all_etypes }
 
         self.gconv_layers = [
             GATConv(node_hidden, activation=tf.nn.sigmoid),
@@ -143,15 +146,19 @@ class Model(tf.keras.Model):
         self.final_place = tf.keras.layers.Dense(1, activation=None)
         self.final_nccl = tf.keras.layers.Dense(1, activation=None)
 
-    def set_graph(self, graph):
+    def set_graph(self, graph, segments):
         # self.graph = graph.to('gpu:0')
         self.graph = graph
+        self.segments = segments
 
     def call(self, inputs):
         [op_feats, device_feats, tensor_feats, link_feats, place_feats] = inputs
 
         op_feats = self.op_trans(op_feats)
+        op_feats = tf.math.unsorted_segment_mean(op_feats, *self.segments['op'])
+        op_feats = self.op_normalizer(op_feats)
         device_feats = self.device_trans(device_feats)
+        device_feats = self.device_normalizer(device_feats)
 
         edge_feats = {
             "link": link_feats,
@@ -160,7 +167,11 @@ class Model(tf.keras.Model):
             "place": place_feats,
             "serve": place_feats
         }
-        edge_feats = { etype: self.edge_trans[etype](edge_feats[etype]) for etype in all_etypes }
+        for etype in all_etypes:
+            x = self.edge_trans[etype](edge_feats[etype])
+            if etype in self.segments:
+                x = tf.math.unsorted_segment_mean(x, *self.segments[etype])
+            edge_feats[etype] = self.edge_normalizers[etype](x)
 
         for gconv_layer in self.gconv_layers:
             op_feats, device_feats = gconv_layer(self.graph, op_feats, device_feats, edge_feats)

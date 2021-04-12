@@ -113,17 +113,6 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     tensor_feats = np.array(tensor_feats, dtype=float)
     place_feats = np.array(place_feats, dtype=float)
 
-    base_groups = group_with_tge_basegroups(gdef)
-    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20)
-
-    g = dgl.heterograph({
-        ('device', 'link', 'device'): edge_link,
-        ('op', 'prev', 'op'): edge_prev,
-        ('op', 'succ', 'op'): edge_succ,
-        ('op', 'place', 'device'): edge_place,
-        ('device', 'serve', 'op'): edge_serve
-    })
-
     topology_for_simulator = gen_topology_for_simulator(topo_spec)
 
     # note for normalization: regard tensor size as the time required to trasfer it in unit (maximum) bandwidth
@@ -141,13 +130,101 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     tensor_feats[:, 0] /= CL2 * Bmax
     place_feats[:, 0:4] /= CL2
 
+    g_full = dgl.heterograph({
+        ('device', 'link', 'device'): edge_link,
+        ('op', 'prev', 'op'): edge_prev,
+        ('op', 'succ', 'op'): edge_succ,
+        ('op', 'place', 'device'): edge_place,
+        ('device', 'serve', 'op'): edge_serve
+    })
+
+    base_groups = group_with_tge_basegroups(gdef)
+    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20)
+
+    op_segment = [0] * op_feats.shape[0]
+    for group_id, group in enumerate(groups):
+        for node_id in group:
+            op_segment[node_id] = group_id
+
+    edge_prev_group_dict = {}
+    edge_prev_segment = [] # the segment id
+    grouped_edge_prev = [], []
+    for i, (a, b) in enumerate(zip(*edge_prev)):
+        ga, gb = op_segment[a], op_segment[b]
+        if (ga, gb) in edge_prev_group_dict:
+            edge_prev_segment.append(edge_prev_group_dict[(ga, gb)])
+        else:
+            group_id = len(edge_prev_group_dict)
+            edge_prev_group_dict[(ga, gb)] = group_id
+            grouped_edge_prev[0].append(ga)
+            grouped_edge_prev[1].append(gb)
+            edge_prev_segment.append(group_id)
+
+    edge_succ_group_dict = {}
+    edge_succ_segment = []
+    grouped_edge_succ = [], []
+    for i, (a, b) in enumerate(zip(*edge_succ)):
+        ga, gb = op_segment[a], op_segment[b]
+        if (ga, gb) in edge_succ_group_dict:
+            edge_succ_segment.append(edge_succ_group_dict[(ga, gb)])
+        else:
+            group_id = len(edge_succ_group_dict)
+            edge_succ_group_dict[(ga, gb)] = group_id
+            grouped_edge_succ[0].append(ga)
+            grouped_edge_succ[1].append(gb)
+            edge_succ_segment.append(group_id)
+
+    edge_place_group_dict = {}
+    edge_place_segment = []
+    grouped_edge_place = [], []
+    for i, (a, b) in enumerate(zip(*edge_place)):
+        ga = op_segment[a]
+        if (ga, b) in edge_place_group_dict:
+            edge_place_segment.append(edge_place_group_dict[(ga, b)])
+        else:
+            group_id = len(edge_place_group_dict)
+            edge_place_group_dict[(ga, b)] = group_id
+            grouped_edge_place[0].append(ga)
+            grouped_edge_place[1].append(b)
+            edge_place_segment.append(group_id)
+
+    edge_serve_group_dict = {}
+    edge_serve_segment = []
+    grouped_edge_serve = [], []
+    for i, (a, b) in enumerate(zip(*edge_serve)):
+        gb = op_segment[b]
+        if (a, gb) in edge_serve_group_dict:
+            edge_serve_segment.append(edge_serve_group_dict[(a, gb)])
+        else:
+            group_id = len(edge_serve_group_dict)
+            edge_serve_group_dict[(a, gb)] = group_id
+            grouped_edge_serve[0].append(a)
+            grouped_edge_serve[1].append(gb)
+            edge_serve_segment.append(group_id)
+
+    g_grouped = dgl.heterograph({
+        ('device', 'link', 'device'): edge_link,
+        ('op', 'prev', 'op'): grouped_edge_prev,
+        ('op', 'succ', 'op'): grouped_edge_succ,
+        ('op', 'place', 'device'): grouped_edge_place,
+        ('device', 'serve', 'op'): grouped_edge_serve
+    })
+
     return {
-        "graph": g,
+        "graph": g_grouped,
+        "graph_full": g_full,
         "gdef": gdef,
         "prof_data": prof_data,
         "topo_spec": topo_spec,
         "devices": devices,
         "groups": groups,
+        "segments": {
+            "op": (op_segment, len(groups)),
+            "prev": (edge_prev_segment, len(edge_prev_group_dict)),
+            "succ": (edge_succ_segment, len(edge_succ_group_dict)),
+            "place": (edge_place_segment, len(edge_place_group_dict)),
+            "serve": (edge_serve_segment, len(edge_serve_group_dict))
+        },
         "op_feats": op_feats,
         "device_feats": device_feats,
         "tensor_feats": tensor_feats,

@@ -17,7 +17,10 @@ class BaseLine:
 def gen_baselines(record):
     baselines = []
 
-    n = len(record['gdef'].node)
+    if 'groups' in record:
+        n = len(record['groups'])
+    else:
+        n = len(record['gdef'].node)
     m = len(record['devices'])
 
     x = BaseLine('gpu0')
@@ -60,7 +63,10 @@ def eval_baselines(record, baselines):
         b.feedback = feedback
 
 def random_cross_node(record, *strategies):
-    n = len(record['gdef'].node)
+    if 'groups' in record:
+        n = len(record['groups'])
+    else:
+        n = len(record['gdef'].node)
     m = len(record['devices'])
 
     result_nodemask = np.ones((n, m), dtype=np.int)
@@ -77,7 +83,7 @@ def random_cross_node(record, *strategies):
     return result_nodemask, result_ncclmask, result_psmask
 
 def random_shuffle_node(record, nodemask, ncclmask, psmask):
-    indexes = np.arange(len(record['gdef'].node))
+    indexes = np.arange(nodemask.shape[0])
     np.random.shuffle(indexes)
     return nodemask[indexes, :], np.array(ncclmask)[indexes], np.array(psmask)[indexes]
 

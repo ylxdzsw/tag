@@ -36,7 +36,7 @@ def prepare_features(record, nodemask, ncclmask, psmask, feedback):
 
     op_feats = np.hstack((
         record["op_feats"],
-        np.reshape(ncclmask, (-1, 1)),
+        # np.reshape(ncclmask, (-1, 1)), # TODO: expand if grouped
         np.reshape(feedback['leftout'], (-1, 1)),
         op_feedbacks
     ))
@@ -49,9 +49,10 @@ def prepare_features(record, nodemask, ncclmask, psmask, feedback):
     link_feats = record["link_feats"]
 
     place_extra = []
-    for op_id in range(len(record['gdef'].node)):
-        for dev_id in range(len(record['devices'])):
-            place_extra.append([ nodemask[op_id, dev_id], int(psmask[op_id] == dev_id) ])
+    for g_id, group in enumerate(record['groups']):
+        for op_id in group:
+            for dev_id in range(len(record['devices'])):
+                place_extra.append([ nodemask[g_id, dev_id], int(psmask[g_id] == dev_id) ])
 
     place_feats = np.hstack((
         record["place_feats"],
@@ -95,7 +96,7 @@ with tf.device("/gpu:0"):
                 t.evaluate_with_feedback(record)
                 record['traces'].append(t)
 
-        model.set_graph(record["graph"])
+        model.set_graph(record["graph"], record["segments"])
 
         trace = record['traces'][np.random.randint(len(record['traces']))]
         features = prepare_features(record, trace.nodemask, trace.ncclmask, trace.psmask, trace.feedback)

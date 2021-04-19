@@ -7,20 +7,11 @@ import tempfile
 import os
 import json
 
-def sample_logits(logit, e=.02):
-    p = tf.math.sigmoid(logit)
-    def f(x):
-        if np.random.rand() < e:
-            return np.random.choice(2)
-        else:
-            return int(np.random.rand() < x)
-    return np.vectorize(f)(p)
-
-def sample_and_evaluate_with_feedback(pack):
-    record, nodelogit, nccllogit = pack
-    nodemask = sample_logits(nodelogit)
-    ncclmask = sample_logits(nccllogit)
-    return (nodemask, ncclmask, *evaluate_with_feedback(record, nodemask, ncclmask, None))
+# def sample_and_evaluate_with_feedback(pack):
+#     record, nodelogit, nccllogit = pack
+#     nodemask = sample_logits(nodelogit)
+#     ncclmask = sample_logits(nccllogit)
+#     return (nodemask, ncclmask, *evaluate_with_feedback(record, nodemask, ncclmask, None))
 
 def evaluate_with_feedback(record, nodemask, ncclmask, psmask, trace=""):
     gdef = record["gdef"]
@@ -67,10 +58,11 @@ def invalidity(record, feedback): # 0 means valid
     for peak_memory, (_, task_id) in zip(feedback["peak_memory"], record["devices"]):
         if peak_memory > record["topo_spec"].tasks[task_id].memory:
             oom += 1
-    return oom + sum(feedback["leftout"])
+    return oom / len(record["devices"]) + np.mean(feedback["leftout"])
 
 def score(record, time, feedback):
-    return np.sqrt(time / 1_000_000) * (1 + 10 * invalidity(record, feedback))
+    CL2 = record['scaler'][0]
+    return np.sqrt(time / CL2) + 100 * invalidity(record, feedback)
 
 def replication_number_feasibility_rounding(record, nodemask):
     B = record["batchsize"]

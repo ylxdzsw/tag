@@ -258,6 +258,9 @@ def get_all_data():
             records.append(gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo))
         records.append(gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo))
 
+    for i, record in enumerate(records):
+        record['id'] = i
+
     return records
 
 def gen_nccl_model(topo_spec: TopoSpec):

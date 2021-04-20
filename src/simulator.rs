@@ -187,11 +187,13 @@ impl Simulator for SimpleSimulator {
                             // for gpu in group.devices.iter() {
                             //     gpu_available_time[*gpu] = eft;
                             // }
-                            task.duration = nccl_time(*size, &collective_groups[&group_key].model);
-                            task.eft = cmp::max(time, collective_available_time) + task.duration;
-                            collective_available_time = task.eft;
-                            for task_id in ready_list {
-                                ongoing_tasks.push(OngoingTask { id: *task_id, eft: task.eft })
+                            let duration = nccl_time(*size, &collective_groups[&group_key].model);
+                            let eft = cmp::max(time, collective_available_time) + duration;
+                            collective_available_time = eft;
+                            for &mut task_id in ready_list {
+                                tasks[task_id].duration = duration;
+                                tasks[task_id].eft = eft;
+                                ongoing_tasks.push(OngoingTask { id: task_id, eft })
                             }
                         }
                     }

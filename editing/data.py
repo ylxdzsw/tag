@@ -247,7 +247,7 @@ def get_all_data():
         [2810, 2810, 2810],
         [2810, 2810, 2810]])
 
-    for m in ("inception", ): # ("inception", "resnet", "vgg", "transformer", "bert", "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
+    for m in ("inception", "transformer"): # ("inception", "resnet", "vgg", "transformer", "bert", "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
         gdef = load('raw_data/{}/model.pickle'.format(m))
         prof_data = ProfileData(m)
         tge.simplify_graph(gdef, sinks=["Adam"])

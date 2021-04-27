@@ -116,25 +116,39 @@ impl Graph {
                     node.get_output(0).set_flag(Tensor::IS_BATCHED);
                 },
                 "Cast" | "ZerosLike" |"GreaterEqual" | "Neg" | "Log1p" | "Exp" | "Slice" |
-                "Squeeze" | "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" => {
+                "Squeeze" | "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" |
+                "NotEqual" | "Rsqrt" | "StridedSlice" => {
                     let (id, index, _) = &node.inputs[0];
                     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
                         node.get_output(0).set_flag(Tensor::IS_BATCHED);
                     }
                 },
-                "Add" | "Sub" | "Mul" => for input_index in 0..=1 {
+                "Add" | "Sub" | "Mul" | "RealDiv" => for input_index in 0..=1 {
                     let (id, index, _) = &node.inputs[input_index];
                     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
                         node.get_output(0).set_flag(Tensor::IS_BATCHED);
                         break
                     }
                 },
-                "MatMul" => {
+                "MatMul" => { // todo: BatchMatMulV2 is used in transformer
                     let (id, index, _) = &node.inputs[0];
                     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) && !node.raw_node.attr["transpose_a"].get_b() {
                         node.get_output(0).set_flag(Tensor::IS_BATCHED);
                     }
-                }
+                },
+                // "GatherV2" => { // hack for transformer
+                //     let (id, index, _) = &node.inputs[1];
+                //     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
+                //         node.get_output(0).set_flag(Tensor::IS_BATCHED);
+                //     }
+                // },
+                // "ConcatV2" => for input_index in 0..node.raw_node.attr.get("N").map(|x| x.get_i() as usize).unwrap_or(2) { // hack for transformer
+                //     let (id, index, _) = &node.inputs[input_index];
+                //     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
+                //         node.get_output(0).set_flag(Tensor::IS_BATCHED);
+                //         break
+                //     }
+                // }
                 _ => {}
                 // todo: Select?
                 // todo: shape -> fill or shape -> broadcast also gives a splittable tensor

@@ -12,6 +12,7 @@ use graph::Graph;
 use misc::{Target, DataProfiler};
 
 pub mod misc;
+pub mod mcts;
 pub mod proto;
 pub mod graph;
 pub mod editor;

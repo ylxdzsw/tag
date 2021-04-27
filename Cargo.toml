@@ -16,3 +16,5 @@ panic = 'abort'
 protobuf = "=2.10.2"
 oh-my-rust = { git = "https://github.com/ylxdzsw/oh-my-rust" }
 serde_json = "1.0"
+ordered-float = "0.5"
+rand = "0.8"

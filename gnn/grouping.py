@@ -76,7 +76,7 @@ def group_with_topk_layers(gdef, base_groups, prof_data, n_groups=20):
 def group_with_metis(gdef, base_groups, prof_data, n_groups=20):
     from tge import TGE
 
-    base_groups = TGE(gdef, devices).get_groups()
+    # base_groups = TGE(gdef, devices).get_groups()
     _, id_list = metis(gdef, prof_data, n_groups, list(range(len(gdef.node))), batchsize) # TODO: use average time in all gpu types? weighted average?
     groups = list(groupby(enumerate(id_list), key=cadr, value=car).values())
     return compose(groups, base_groups)

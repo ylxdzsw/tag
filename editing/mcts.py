@@ -7,6 +7,7 @@ from typing import Any
 from data import TopoSpec, TopoSpecTask, ProfileData, device_name, gen_topology_for_simulator, gen_nccl_model
 from grouping import group_with_topk_nodes, group_with_tge_basegroups
 from utils import info, load
+from metis import metis
 
 @dataclass
 class Action:
@@ -41,6 +42,7 @@ class Node:
         self.q = 0
         self.n_visits = 0
         self.children = []
+        self.value = None
 
     def playout_and_update_recursive(self, state):
         if self.is_leaf():
@@ -76,16 +78,25 @@ class Node:
             if sum(placement) == 0:
                 continue
 
-            for communication in range(2):
-                self.children.append(Node((placement, communication)))
+            for communication in range(3):
+                if communication == 1 and sum(placement) == 1:
+                    continue
+
+                action = placement, communication
+                if len(state.actions) > 0 and action == state.actions[0]:
+                    continue
+
+                self.children.append(Node(action))
 
         for child in self.children:
             child.p = 1 / len(self.children)
 
     def evaluate(self, state):
-        time, oom = simulate(state)
-        speed_up = -1 if oom > 0 else state.dp_time / time - 1
-        return speed_up
+        if self.value is None:
+            time, oom = simulate(state)
+            speed_up = -1 if oom > 0 else state.dp_time / time - 1
+            self.value = speed_up
+        return self.value
 
 class Tree:
     def __init__(self):
@@ -110,7 +121,7 @@ def search(gdef, topo_spec, prof_data):
     batchsize = prof_data.maximum_batchsize()
 
     base_groups = group_with_tge_basegroups(gdef)
-    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=40)
+    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=60)
     sorted_groups = sorted(groups, key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
 
     state = State(
@@ -144,18 +155,28 @@ def simulate(state):
     for gid, group in enumerate(state.sorted_groups):
         action = state.actions[gid] if gid < len(state.actions) else state.actions[0]
 
-        placed_devices = [ int(x) for x in np.nonzero(action[0])[0] ]
-        for node_id in group:
-            if action[1] == 0: # PS
+        placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
+        placed_devices = np.nonzero(placed_devices_mask)[0]
+
+        if action[1] == 0: # PS
+            for node_id in group:
                 s = [ -1-placed_devices[node_id % len(placed_devices)] ]
-                s.extend(action[0])
-            elif action[1] == 1: # NCCL
-                s = [ 1 ]
-                s.extend(action[0])
-            elif action[1] == 2: # MP
-                pass
-            strategy[gdef.node[node_id].name] = s
-    # info(strategy)
+                s.extend(placed_devices_mask)
+                strategy[gdef.node[node_id].name] = s
+        elif action[1] == 1: # NCCL
+            s = [ 1 ]
+            s.extend(placed_devices_mask)
+            for node_id in group:
+                strategy[gdef.node[node_id].name] = s
+        elif action[1] == 2: # MP
+            if len(group) <= len(placed_devices): # we have less nodes than device, metis will complain.
+                assignments = [ placed_devices[i] for i, _ in enumerate(group) ]
+            else:
+                _, assignments = metis(state.gdef, {}, len(placed_devices), group, state.batchsize)
+            for node_id, assignment in zip(group, assignments):
+                s = [0] * (1 + len(placed_devices))
+                s[assignment+1] = 1
+                strategy[gdef.node[node_id].name] = s
 
     t = tge.TGE(state.gdef, [device for device, _ in devices], sinks=["Adam"])
     t.set_strategy(strategy)
@@ -178,10 +199,12 @@ if __name__ == '__main__':
     m = sys.argv[1]
 
     topo = TopoSpec([
-        TopoSpecTask('1080ti', 6<<30, 5000, 1),
-        TopoSpecTask('v100',   8<<30, 5000, 2),
-    ], [[2810, 2810],
-        [2810, 2810]])
+        TopoSpecTask('v100',   8<<30, 8000, 2),
+        TopoSpecTask('v100',   8<<30, 8000, 2),
+        TopoSpecTask('1080ti', 6<<30, 8000, 2),
+    ], [[5000, 1250, 5000],
+        [1250, 5000, 5000],
+        [5000, 5000, 5000]])
 
     gdef = load('raw_data/{}/model.pickle'.format(m))
     prof_data = ProfileData(m)

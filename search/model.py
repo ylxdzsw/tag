@@ -206,6 +206,9 @@ class Decoder(tf.keras.Model):
 
         return x
 
+def encode_features_no_runtime(record):
+    pass
+
 def encode_features(record, nodemask, ncclmask, psmask, feedback):
     CL2, Bmax = record['scaler']
 

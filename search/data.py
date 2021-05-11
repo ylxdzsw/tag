@@ -13,6 +13,8 @@ from bisect import bisect_left
 from utils import groupby, car, cadr, cdr, info, load, parse_input, get_input_size
 from metis import metis
 from grouping import group_with_topk_nodes, group_with_tge_basegroups
+from utils import load, save, info
+
 
 @dataclass
 class TopoSpec:
@@ -59,7 +61,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     link_feats = np.array(link_feats, dtype=float)
 
     nccl_models = gen_nccl_model(topo_spec)
-    n_op, n_dev = len(gdef.node), len(devices)
+    n_op, n_dev = len(gdef.node), len(device_list)
 
     parameter_sizes = np.zeros(n_op)
     tensor_sizes = np.zeros((n_op, n_op))
@@ -82,7 +84,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             computation_times[thisnodeid, device_id, 2] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 4)[node.name]
             computation_times[thisnodeid, device_id, 3] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 8)[node.name]
 
-    base_op_groups = group_with_tge_basegroups(gdef)
+    base_groups = group_with_tge_basegroups(gdef)
     op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20)
     op_segment = [0] * len(gdef.node)
     for group_id, ops in enumerate(op_groups):
@@ -90,7 +92,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             op_segment[node_id] = group_id
 
     op_feats = np.array([
-        [ np.sum(np.mean(computation_times[op, :, x]) for op in ops) for x in range(4) ] +
+        [ np.sum([np.mean(computation_times[op, :, x]) for op in ops]) for x in range(4) ] +
         [ np.sum(parameter_sizes[ops]) ] +
         [ np.sum([ tensor_sizes[op1, op2] for op1 in ops for op2 in ops if op1 != op2 ]) ]
         for i, ops in enumerate(op_groups)
@@ -221,9 +223,11 @@ def get_all_data():
         tge.simplify_graph(gdef, sinks=["Adam"])
 
         model_size = estimate_model_size(gdef, prof_data.maximum_batchsize())
-        for _ in range(8):
+        for i in range(8):
+            info("generating {} topo {}".format(m, i))
             topo = gen_random_topology(model_size)
             records.append(gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo))
+        info("generating {} real topo".format(m))
         records.append(gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo))
 
     for i, record in enumerate(records):
@@ -291,7 +295,7 @@ def gen_random_topology(model_size):
 
     tasks = []
     for _ in range(4): # at most 4 tasks
-        if sum(t.number for t in tasks) >= 2 and total_memory > 2 * model_size and np.random.rand() < .5:
+        if len(tasks) >= 2 and total_memory > 2 * model_size and np.random.rand() < .5:
             break
 
         gpu_model = np.random.choice(gpu_models)
@@ -378,3 +382,7 @@ class ProfileData:
             result[key] = [ cache[gtype][key] for gtype in gtypes ]
 
         return result
+
+if __name__ == '__main__':
+    records = get_all_data()
+    save(records, "records")

@@ -67,7 +67,7 @@ class Node:
         return max(self.children, key=lambda x: x.puct(self.n_visits))
 
     def puct(self, pvisit):
-        return self.q + 0.4 * self.p * np.sqrt(pvisit) / (1 + self.n_visits)
+        return self.q + 1.4 * self.p * np.sqrt(pvisit) / (1 + self.n_visits)
 
     def update(self, leaf_value):
         self.n_visits += 1
@@ -143,6 +143,7 @@ def search(gdef, topo_spec, prof_data):
     state_copy.actions.append(([1 for _ in range(len(topo_spec.tasks))], 1))
     time, _ = simulate(state_copy)
 
+    # TODO: if OOM, use MP as baseline
     state.dp_time = time
 
     best_score, best_actions = Tree().playout(state, 50000)
@@ -170,7 +171,7 @@ def simulate(state):
                 strategy[gdef.node[node_id].name] = s
         elif action[1] == 2: # MP
             if len(group) <= len(placed_devices): # we have less nodes than device, metis will complain.
-                assignments = [ placed_devices[i] for i, _ in enumerate(group) ]
+                assignments = [ i for i, _ in enumerate(group) ]
             else:
                 _, assignments = metis(state.gdef, {}, len(placed_devices), group, state.batchsize)
             for node_id, assignment in zip(group, assignments):
@@ -199,11 +200,11 @@ if __name__ == '__main__':
     m = sys.argv[1]
 
     topo = TopoSpec([
-        TopoSpecTask('v100',   8<<30, 8000, 2),
-        TopoSpecTask('v100',   8<<30, 8000, 2),
-        TopoSpecTask('1080ti', 6<<30, 8000, 2),
-    ], [[5000, 1250, 5000],
-        [1250, 5000, 5000],
+        TopoSpecTask('v100',   12<<30, 8000, 2),
+        TopoSpecTask('v100',   12<<30, 8000, 2),
+        TopoSpecTask('1080ti', 8<<30, 8000, 2),
+    ], [[5000, 2180, 5000],
+        [2180, 5000, 5000],
         [5000, 5000, 5000]])
 
     gdef = load('raw_data/{}/model.pickle'.format(m))

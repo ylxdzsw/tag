@@ -18,10 +18,23 @@ from multiprocessing import Pool
 # np.random.seed(seed)
 
 def playout(record, gnn, decoder):
-    state = State()
-    mcts = MCTS(policy_fun)
+    gdef, topo_spec, prof_data = record['gdef'], record['topo_spec'], record['prof_data']
+    batchsize = prof_data.maximum_batchsize()
 
-    data = [] # (pieces, masks, probs)
+    sorted_groups = sorted(record['op_groups'], key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
+    state = State(record, sorted_groups, 0, [])
+
+    state_copy = state.clone()
+    state_copy.actions.append(([1 for _ in range(len(topo_spec.tasks))], 1))
+    time, _ = evaluate_with_feedback(state_copy)
+
+    # TODO: if OOM, use MP as baseline
+    # TODO: save to record
+    state.dp_time = time
+
+    mcts = Tree(None).playout(state, 50000)
+
+    data = [] # (actions, action_probs)
 
     while True:
         status = game.get_status()
@@ -48,6 +61,8 @@ def playout(record, gnn, decoder):
         old_pos, new_pos = mcts.sample_action(0.2, 0.1)
         game.do_move(old_pos, new_pos)
         mcts.chroot(old_pos, new_pos)
+
+    return data
 
 def worker_init(model_path):
     global model

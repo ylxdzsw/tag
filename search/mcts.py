@@ -129,10 +129,7 @@ def search(record):
     gdef, topo_spec, prof_data = record['gdef'], record['topo_spec'], record['prof_data']
     batchsize = prof_data.maximum_batchsize()
 
-    base_groups = group_with_tge_basegroups(gdef)
-    groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=60)
-    sorted_groups = sorted(groups, key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
-
+    sorted_groups = sorted(record['op_groups'], key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
     state = State(record, sorted_groups, 0, [])
 
     state_copy = state.clone()
@@ -143,7 +140,7 @@ def search(record):
     # TODO: save to record
     state.dp_time = time
 
-    best_score, best_actions = Tree(None).playout(state, 50000)
+    best_score, best_actions = Tree(None).playout(state, 8000)
     return best_score, best_actions
 
 if __name__ == '__main__':

@@ -85,7 +85,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             computation_times[thisnodeid, device_id, 3] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 8)[node.name]
 
     base_groups = group_with_tge_basegroups(gdef)
-    op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=20)
+    op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=40)
     op_segment = [0] * len(gdef.node)
     for group_id, ops in enumerate(op_groups):
         for node_id in ops:
@@ -291,7 +291,7 @@ def gen_random_topology(model_size):
     }
     intra_links = (8000, 50000) # PCI, nvlink
     inter_links = (2810, 5000) # diff rack, same rack
-    card_numbers = (1, 2, 4)
+    card_numbers = (2, 4)
 
     tasks = []
     for _ in range(4): # at most 4 tasks

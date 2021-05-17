@@ -32,7 +32,7 @@ class MetisNode:
     vwgt: int
 
 def metis(gdef, base_groups, node_cost_list, npart, target_nodes, batchsize, balance_factor=2.):
-    metis_nodes = [ MetisNode(gid, [], 1) for gid, group in enumerate(base_groups) if any((i in target_nodes) for i in group) ]
+    metis_nodes = [ MetisNode(gid, {}, 1) for gid, group in enumerate(base_groups) if any((i in target_nodes) for i in group) ]
 
     raw_to_group_map = { i: gid for gid, group in enumerate(base_groups) for i in group }
     group_to_metis_map = { metis_node.gid: metis_id for metis_id, metis_node in enumerate(metis_nodes) }
@@ -48,7 +48,8 @@ def metis(gdef, base_groups, node_cost_list, npart, target_nodes, batchsize, bal
 
         for input_index, input_tensor_name in enumerate(node_def.input):
             input_name, input_tensor_index = parse_input(input_tensor_name)
-            input_group_id = raw_to_group_map[name_to_raw_map[input_name]]
+            input_raw_id = name_to_raw_map[input_name]
+            input_group_id = raw_to_group_map[input_raw_id]
 
             if input_group_id == metis_node.gid:
                 continue
@@ -64,7 +65,7 @@ def metis(gdef, base_groups, node_cost_list, npart, target_nodes, batchsize, bal
             if tensorsize == 0: # TODO: differentiate the cases of invalid cut and free cut (control dependency or empty tensor)
                 tensorsize = 1000
 
-            if input_metis_id not in node.adj:
+            if input_metis_id not in metis_node.adj:
                 metis_node.adj[input_metis_id] = 0
                 input_metis_node.adj[metis_id] = 0
 
@@ -82,7 +83,7 @@ def metis(gdef, base_groups, node_cost_list, npart, target_nodes, batchsize, bal
     for metis_node in metis_nodes:
         # info(metis_node)
         xadj.append(len(adjncy))
-        for adj_id, tensorsize in metis_node.adj:
+        for adj_id, tensorsize in metis_node.adj.items():
             adjncy.append(adj_id)
             adjwgt.append(tensorsize)
         vwgt.append(metis_node.vwgt)

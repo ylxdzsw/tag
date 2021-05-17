@@ -116,14 +116,14 @@ impl Graph {
                     node.get_output(0).set_flag(Tensor::IS_BATCHED);
                 },
                 "Cast" | "ZerosLike" |"GreaterEqual" | "Neg" | "Log1p" | "Exp" | "Slice" |
-                "Squeeze" | "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" |
+                "Squeeze" | "Identity" | "Sigmoid" | "LeakyRelu" | "Relu" | "Tanh" | "TanhGrad" |
                 "NotEqual" | "Rsqrt" | "StridedSlice" => {
                     let (id, index, _) = &node.inputs[0];
                     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
                         node.get_output(0).set_flag(Tensor::IS_BATCHED);
                     }
                 },
-                "Add" | "Sub" | "Mul" | "RealDiv" => for input_index in 0..=1 {
+                "Add" | "Sub" | "Mul" | "RealDiv" | "FloorDiv" | "FloorMod" => for input_index in 0..=1 {
                     let (id, index, _) = &node.inputs[input_index];
                     if node.graph().nodes[*id].get_output(*index).has_flag(Tensor::IS_BATCHED) {
                         node.get_output(0).set_flag(Tensor::IS_BATCHED);

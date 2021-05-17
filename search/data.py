@@ -12,7 +12,7 @@ import tge
 from bisect import bisect_left
 from utils import groupby, car, cadr, cdr, info, load, parse_input, get_input_size
 from metis import metis
-from grouping import group_with_topk_nodes, group_with_tge_basegroups
+from grouping import group_with_topk_nodes, group_with_tge_basegroups, group_with_metis
 from utils import load, save, info
 
 
@@ -85,7 +85,9 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
             computation_times[thisnodeid, device_id, 3] += prof_data.get(topo_spec.tasks[task_id].gpu_model, batchsize // 8)[node.name]
 
     base_groups = group_with_tge_basegroups(gdef)
-    op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=40)
+    costs = [ int(x) for x in np.sqrt(np.mean(computation_times, (1,2))) ] #  + np.sqrt(parameter_sizes)
+    op_groups = group_with_metis(gdef, base_groups, costs, batchsize, n_groups=40)
+    # op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=40)
     op_segment = [0] * len(gdef.node)
     for group_id, ops in enumerate(op_groups):
         for node_id in ops:

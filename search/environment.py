@@ -31,10 +31,8 @@ def evaluate_with_feedback(state, trace=""):
             for node_id in group:
                 strategy[gdef.node[node_id].name] = s
         elif action[1] == 2: # MP
-            if len(group) <= len(placed_devices): # we have less nodes than device, metis will complain.
-                assignments = [ i for i, _ in enumerate(group) ]
-            else:
-                _, assignments = metis(gdef, {}, len(placed_devices), group, batchsize)
+            # cost : int(math.sqrt(tensorsize))
+            assignments = metis(gdef, {}, len(placed_devices), group, batchsize)
             for node_id, assignment in zip(group, assignments):
                 s = [0] * (1 + len(placed_devices))
                 s[assignment+1] = 1

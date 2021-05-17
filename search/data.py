@@ -156,7 +156,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     # 0. (not implemented) use second as time units and MB as size units?
     # 1. calculate CL2 = ||computation times||_2 and divide all computation time
     # 2. calculate maximum bandwidth Bmax and divide all bandwidth by it
-    # 3. divide all tensors and memory limits by CL2*B
+    # 3. divide all tensors and memory limits by CL2*Bmax
     CL2 = np.linalg.norm(op_feats[:, 0])
     Bmax = max( np.max(topo_spec.bandwidth), max(x.intra_bandwidth for x in topo_spec.tasks) )
 
@@ -226,9 +226,15 @@ def get_all_data():
         for i in range(8):
             info("generating {} topo {}".format(m, i))
             topo = gen_random_topology(model_size)
-            records.append(gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo))
+            record = gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo)
+            record['model_name'] = m
+            record['topo_name'] = i
+            records.append(record)
         info("generating {} real topo".format(m))
-        records.append(gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo))
+        record = gen_data(gdef, prof_data,  prof_data.maximum_batchsize(), real_topo)
+        record['model_name'] = m
+        record['topo_name'] = 'real'
+        records.append(record)
 
     for i, record in enumerate(records):
         record['id'] = i
@@ -382,7 +388,3 @@ class ProfileData:
             result[key] = [ cache[gtype][key] for gtype in gtypes ]
 
         return result
-
-if __name__ == '__main__':
-    records = get_all_data()
-    save(records, "records")

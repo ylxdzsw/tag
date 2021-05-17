@@ -27,60 +27,72 @@ libmetis.METIS_PartGraphKway.restype = ctypes.c_int
 
 @dataclass
 class MetisNode:
-    raw_id: int
-    adj: list # (new_id, tensorsize)
-    computation: int
-    memory: int
+    gid: int
+    adj: dict # new_id => tensorsize
+    vwgt: int
 
-def metis(gdef, prof_data, npart, nodes, batchsize, computation_balance_factor=5.0, memory_balance_factor=2.0):
-    nodes = [ MetisNode(i, [], 0, 1) for i in nodes ]
-    raw_to_new_map = { node.raw_id: i for i, node in enumerate(nodes) }
-    name_dict = { node.name: i for i, node in enumerate(gdef.node) }
+def metis(gdef, base_groups, node_cost_list, npart, target_nodes, batchsize, balance_factor=2.):
+    metis_nodes = [ MetisNode(gid, [], 1) for gid, group in enumerate(base_groups) if any((i in target_nodes) for i in group) ]
 
-    for new_id, node in enumerate(nodes):
-        node_def = gdef.node[node.raw_id]
+    raw_to_group_map = { i: gid for gid, group in enumerate(base_groups) for i in group }
+    group_to_metis_map = { metis_node.gid: metis_id for metis_id, metis_node in enumerate(metis_nodes) }
+    name_to_raw_map = { node_def.name: raw_id for raw_id, node_def in enumerate(gdef.node) }
+
+    if len(metis_nodes) <= npart: # not enough nodes to partition, metis will complaint.
+        return [ group_to_metis_map[raw_to_group_map[raw_id]] for raw_id in target_nodes ]
+
+    for target_index, raw_id in enumerate(target_nodes):
+        metis_id = group_to_metis_map[raw_to_group_map[raw_id]]
+        metis_node = metis_nodes[metis_id]
+        node_def = gdef.node[raw_id]
+
         for input_index, input_tensor_name in enumerate(node_def.input):
             input_name, input_tensor_index = parse_input(input_tensor_name)
-            input_raw_id = name_dict[input_name]
+            input_group_id = raw_to_group_map[name_to_raw_map[input_name]]
 
-            if input_raw_id not in raw_to_new_map:
+            if input_group_id == metis_node.gid:
                 continue
 
-            input_new_id = raw_to_new_map[input_raw_id]
-            input_node = nodes[input_new_id]
+            if input_group_id not in group_to_metis_map:
+                continue
+
+            input_metis_id = group_to_metis_map[input_group_id]
+            input_metis_node = metis_nodes[input_metis_id]
             input_node_def = gdef.node[input_raw_id]
+
             tensorsize = get_input_size(input_node_def, input_tensor_index, batchsize)
             if tensorsize == 0: # TODO: differentiate the cases of invalid cut and free cut (control dependency or empty tensor)
                 tensorsize = 1000
 
-            node.adj.append((input_new_id, tensorsize))
-            input_node.adj.append((new_id, tensorsize))
+            if input_metis_id not in node.adj:
+                metis_node.adj[input_metis_id] = 0
+                input_metis_node.adj[metis_id] = 0
 
-            if node_def.op.startswith('Apply') and input_index == 0: # this input is a variable tensor
-                input_node.memory = 1 + int(math.sqrt(tensorsize))
+            metis_node.adj[input_metis_id] += tensorsize
+            input_metis_node.adj[metis_id] += tensorsize
 
-        # node.computation = prof_data[(node_def.name,1)][0]
+        metis_node.vwgt += node_cost_list[target_index]
 
     xadj = []
     adjncy = []
     vwgt = []
     adjwgt = []
-    ubvec = [memory_balance_factor]
+    ubvec = [balance_factor]
 
-    for node in nodes:
-        # info(node)
+    for metis_node in metis_nodes:
+        # info(metis_node)
         xadj.append(len(adjncy))
-        for adj_id, tensorsize in node.adj:
+        for adj_id, tensorsize in metis_node.adj:
             adjncy.append(adj_id)
             adjwgt.append(tensorsize)
-        vwgt.append(node.memory)
+        vwgt.append(metis_node.vwgt)
     xadj.append(len(adjncy))
 
     objvar = (ctypes.c_int64 * 1)(0)
-    membership = (ctypes.c_int64*len(nodes))(*[0]*len(nodes))
+    membership = (ctypes.c_int64*len(metis_nodes))(*[0]*len(metis_nodes))
 
     ret = libmetis.METIS_PartGraphKway(
-        ctypes.byref(ctypes.c_int64(len(nodes))), # nvtxs
+        ctypes.byref(ctypes.c_int64(len(metis_nodes))), # nvtxs
         ctypes.byref(ctypes.c_int64(1)), # ncon
         ctypes.cast((ctypes.c_int64*len(xadj))(*xadj), ctypes.POINTER(ctypes.c_int64)), # xadj
         ctypes.cast((ctypes.c_int64*len(adjncy))(*adjncy), ctypes.POINTER(ctypes.c_int64)), # adjncy
@@ -97,4 +109,4 @@ def metis(gdef, prof_data, npart, nodes, batchsize, computation_balance_factor=5
 
     assert ret == 1
 
-    return list(objvar)[0], list(membership)
+    return [ membership[group_to_metis_map[raw_to_group_map[raw_id]]] for raw_id in target_nodes ]

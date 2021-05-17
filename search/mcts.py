@@ -18,16 +18,8 @@ class Action:
 @dataclass
 class State:
     record: Any
-    # batchsize: Any
-    # topo_spec: Any
-    # prof_data: Any
     sorted_groups: Any
-
-    # topology_for_simulator: Any
-    # nccl_model: Any
-    # prof_data_for_simulator: Any
     dp_time: Any
-
     actions: Any # the actions taken so far. The rest nodes uses the first action (same strategy as the most computational expensive group)
 
     # shallow copy except for the actions
@@ -35,6 +27,29 @@ class State:
         x = copy.copy(self)
         x.actions = copy.deepcopy(self.actions)
         return x
+
+    def finished(self):
+        return len(self.actions) >= len(self.sorted_groups)
+
+    def fill_cache(self):
+        gdef, topo_spec, prof_data = self.record['gdef'], self.record['topo_spec'], self.record['prof_data']
+        batchsize = prof_data.maximum_batchsize()
+        self.sorted_groups = sorted(self.record['op_groups'], key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
+
+        state_copy = self.clone()
+        state_copy.actions.append(([1 for _ in range(len(topo_spec.tasks))], 1))
+        time, _ = evaluate_with_feedback(state_copy)
+
+        # TODO: if OOM, use MP as baseline
+        # TODO: save to record
+        self.dp_time = time
+        return self
+
+    @staticmethod
+    def new(record):
+        state = State(record, None, 0, [])
+        state.fill_cache()
+        return state
 
 class Node:
     def __init__(self, action):
@@ -47,7 +62,7 @@ class Node:
 
     def playout_and_update_recursive(self, state, policy_fun):
         if self.is_leaf():
-            if len(state.actions) < len(state.sorted_groups):
+            if not state.finished():
                 if policy_fun != None:
                     self.expand(state)
                 else:
@@ -90,10 +105,11 @@ class Node:
                     continue
 
                 action = placement, communication
+                child = Node(action)
                 if len(state.actions) > 0 and action == state.actions[0]:
-                    continue
+                    child.n_visits += self.n_visits
 
-                self.children.append(Node(action))
+                self.children.append(child)
 
         for child in self.children:
             child.p = 1 / len(self.children)
@@ -110,7 +126,7 @@ class Tree:
         self.policy_fun = policy_fun
         self.root = Node(None)
 
-    def playout(self, state, ntimes):
+    def playout(self, state, ntimes, trace=None):
         best = -1
         best_actions = None
         for n in range(ntimes):
@@ -119,29 +135,12 @@ class Tree:
             if leaf_value > best:
                 best = leaf_value
                 best_actions = state_clone.actions
-            info(leaf_value, state_clone.actions)
+            if trace is not None:
+                trace.append((leaf_value, state_clone.actions))
         return best, best_actions
 
     def get_action(self):
         return max(self.root.children, key=lambda x: x.n_visits).action
-
-def search(record):
-    gdef, topo_spec, prof_data = record['gdef'], record['topo_spec'], record['prof_data']
-    batchsize = prof_data.maximum_batchsize()
-
-    sorted_groups = sorted(record['op_groups'], key=lambda group: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in group ])) # largest computation time first
-    state = State(record, sorted_groups, 0, [])
-
-    state_copy = state.clone()
-    state_copy.actions.append(([1 for _ in range(len(topo_spec.tasks))], 1))
-    time, _ = evaluate_with_feedback(state_copy)
-
-    # TODO: if OOM, use MP as baseline
-    # TODO: save to record
-    state.dp_time = time
-
-    best_score, best_actions = Tree(None).playout(state, 8000)
-    return best_score, best_actions
 
 if __name__ == '__main__':
     import sys
@@ -162,4 +161,5 @@ if __name__ == '__main__':
 
     record = gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo)
 
-    print(search(record))
+    state = State(record, None, 0, []).fill_cache()
+    print(Tree(None).playout(state, 800))

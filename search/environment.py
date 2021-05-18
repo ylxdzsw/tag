@@ -31,8 +31,8 @@ def evaluate_with_feedback(state, trace=""):
             for node_id in group:
                 strategy[gdef.node[node_id].name] = s
         elif action[1] == 2: # MP
-            # cost : int(math.sqrt(tensorsize))
-            assignments = metis(gdef, {}, len(placed_devices), group, batchsize)
+            costs = [ int(state.record['parameter_sizes'][i] / 100000) for i in group ]
+            assignments = metis(gdef, state.record['base_groups'], costs, len(placed_devices), group, batchsize, balance_factor=2.)
             for node_id, assignment in zip(group, assignments):
                 s = [0] * (1 + len(placed_devices))
                 s[assignment+1] = 1

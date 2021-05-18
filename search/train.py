@@ -62,7 +62,6 @@ def worker_run(board_type):
     global model
     return self_play(board_type, model)
 
-
 def collect_data(record):
     model.cpu().save('scripted_model.pt')
     with Pool(8, initializer=worker_init, initargs=('scripted_model.pt',)) as pool:
@@ -89,7 +88,6 @@ def train(model, optimizer, data):
         if epoch % 100 == 99:
             print(*acc)
             acc = 0, 0
-
 
 records = load("records")
 optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB

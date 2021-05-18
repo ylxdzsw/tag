@@ -1,8 +1,8 @@
-from grouping import group_with_tge_basegroups
+from grouping import group_with_tge_basegroups, group_with_topk_nodes
 from utils import load
 import numpy as np
 
-records = load('records')
+record = load('records')[-1]
 
 # def parameter_sizes(record, grouping):
 #     psizes = record['op_feats'][:, 4] * record['scaler'][0] * record['scaler'][1]
@@ -26,8 +26,11 @@ def dump_grouping(record, grouping, name):
             for node in sorted(group):
                 f.write(nodes[node].name + ' ' + nodes[node].op + ' ' + str(prof_data[nodes[node].name]) + '\n')
 
-grouping = records[-1]['op_groups']
-dump_grouping(records[-1], grouping, 'metis')
+grouping = record['op_groups']
+dump_grouping(record, grouping, 'metis')
 
-grouping = group_with_tge_basegroups(records[-1]['gdef'])
-dump_grouping(records[-1], grouping, 'base')
+grouping = group_with_tge_basegroups(record['gdef'])
+dump_grouping(record, grouping, 'base')
+
+grouping = group_with_topk_nodes(record['gdef'], grouping, record['prof_data'], 40)
+dump_grouping(record, grouping, 'topk')

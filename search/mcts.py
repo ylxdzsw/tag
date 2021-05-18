@@ -93,6 +93,7 @@ class Node:
         self.q += (leaf_value - self.q) / self.n_visits
 
     def expand(self, state, action_probs):
+        # TODO: return the mask for training
         pass
 
     def expand_uniform(self, state):
@@ -100,8 +101,13 @@ class Node:
             if sum(placement) == 0:
                 continue
 
+            ndevices = sum( state.record['topo_spec'].tasks[i].number for i in placement if i == 1 )
+
+            if state.record['batchsize'] % ndevices != 0:
+                continue
+
             for communication in range(3):
-                if communication == 1 and sum(placement) == 1:
+                if ndevices == 1 and communication != 0:
                     continue
 
                 action = placement, communication

@@ -9,7 +9,7 @@ from grouping import group_with_topk_nodes, group_with_tge_basegroups
 from utils import info, load
 from metis import metis
 from environment import evaluate_with_feedback, invalidity
-from mcts import search
+from mcts import State, Tree
 
 if __name__ == '__main__':
     import sys
@@ -26,7 +26,8 @@ if __name__ == '__main__':
 
     record = gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo)
 
-    print(search(record))
+    state = State(record, None, 0, []).fill_cache()
+    print(Tree(None).playout(state, 5000))
 
 # tsp sh -c 'python generalization.py vgg > vgg0.mcts 2>/dev/null'
 # tsp sh -c 'python generalization.py vgg > vgg1.mcts 2>/dev/null'

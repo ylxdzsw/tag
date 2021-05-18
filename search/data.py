@@ -202,6 +202,9 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
         "link_feats": link_feats,
 
+        "base_groups": base_groups,
+        "parameter_sizes": parameter_sizes,
+
         "scaler": (CL2, Bmax),
         "batchsize": batchsize,
         "topology_for_simulator": topology_for_simulator,
@@ -219,7 +222,7 @@ def get_all_data():
         [2810, 2810, 2810],
         [2810, 2810, 2810]])
 
-    for m in ("inception", "resnet", "vgg", "transformer", "bert", "berts"): # (, "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
+    for m in ("inception", "resnet", "vgg", "transformer", ): # (, "bert", "berts" "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
         gdef = load('raw_data/{}/model.pickle'.format(m))
         prof_data = ProfileData(m)
         tge.simplify_graph(gdef, sinks=["Adam"])

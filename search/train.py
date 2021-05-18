@@ -18,6 +18,10 @@ from multiprocessing import Pool
 # np.random.seed(seed)
 
 def playout(record, gnn, decoder):
+
+    def policy_fun(state, ):
+        pass
+
     state = State.new(record)
     mcts = Tree(None).playout(state, 50000)
 

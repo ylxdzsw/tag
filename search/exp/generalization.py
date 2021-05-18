@@ -26,8 +26,12 @@ if __name__ == '__main__':
 
     record = gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo)
 
-    state = State(record, None, 0, []).fill_cache()
-    print(Tree(None).playout(state, 5000))
+    state = State.new(record)
+    trace = []
+    def trace_fun(value, actions):
+        trace.append((value, actions))
+        info(value, actions)
+    info(Tree(None).playout(state, 5000, trace_fun))
 
 # tsp sh -c 'python generalization.py vgg > vgg0.mcts 2>/dev/null'
 # tsp sh -c 'python generalization.py vgg > vgg1.mcts 2>/dev/null'

@@ -142,19 +142,17 @@ class GNN(tf.keras.Model):
             GATConv(node_hidden, activation=tf.nn.sigmoid),
             GATConv(node_hidden, activation=tf.nn.sigmoid),
             GATConv(node_hidden, activation=tf.nn.sigmoid),
-            GATConv(node_hidden, activation=tf.nn.sigmoid) #tf.identity)
+            GATConv(node_hidden, activation=None)
         ]
 
-    def set_graph(self, graph, segments):
+    def set_graph(self, graph):
         # self.graph = graph.to('gpu:0')
         self.graph = graph
-        self.segments = segments
 
     def call(self, inputs):
         [op_feats, device_feats, tensor_feats, link_feats, place_feats] = inputs
 
         op_feats = self.op_trans(op_feats)
-        op_feats = tf.math.unsorted_segment_mean(op_feats, *self.segments['op'])
         op_feats = self.op_normalizer(op_feats)
         device_feats = self.device_trans(device_feats)
         device_feats = self.device_normalizer(device_feats)
@@ -168,27 +166,12 @@ class GNN(tf.keras.Model):
         }
         for etype in all_etypes:
             x = self.edge_trans[etype](edge_feats[etype])
-            if etype in self.segments:
-                x = tf.math.unsorted_segment_mean(x, *self.segments[etype])
             edge_feats[etype] = self.edge_normalizers[etype](x)
 
         for gconv_layer in self.gconv_layers:
             op_feats, device_feats = gconv_layer(self.graph, op_feats, device_feats, edge_feats)
 
-        node_logit = tf.squeeze(self.final_node(op_feats), axis=1)
-        node_sampled = int(tf.random.categorical(tf.reshape(node_logit, (1, -1)), 1).numpy()[0, 0])
-        node_sampled_feat = op_feats[node_sampled:node_sampled+1, :]
-
-        device_feats = tf.concat([device_feats, tf.repeat(node_sampled_feat, device_feats.shape[0], axis=0)], axis=1)
-        device_feats = self.condition(device_feats)
-
-        nccl_logit = tf.squeeze(self.final_nccl(node_sampled_feat), axis=1)
-        place_logit = tf.squeeze(self.final_place(device_feats), axis=1)
-        ps_logit = tf.squeeze(self.final_ps(device_feats), axis=1)
-
-        critic = tf.squeeze(self.final_critic(tf.reduce_mean(op_feats, axis=0, keepdims=True)), axis=1)
-
-        return node_logit, node_sampled, nccl_logit, place_logit, ps_logit, critic
+        return op_feats, device_feats
 
 class Decoder(tf.keras.Model):
     def __init__(self):
@@ -197,57 +180,80 @@ class Decoder(tf.keras.Model):
         hidden = 256
 
         self.per_device_linear = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.hidden = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
         self.final_linear = tf.keras.layers.Dense(node_hidden, activation=None)
 
-    def call(self, device_embeddings, op_embedding, placement_mask, communication):
-        x = self.per_device_linear(tf.concat([device_embeddings, placement_mask], axis=1))
-        x = tf.concat([tf.reduce_mean(x, axis=0, keepdims=true), op_embedding, communication], axis=1)
-        x = tf.squeeze(self.final_linear(x))
+    def call(self, device_embeddings, op_embedding, placement_masks, communication_masks):
+        all_logis = []
+        for i in range(len(communication_masks)):
+            x = self.per_device_linear(tf.concat([device_embeddings, placement_masks[i]], axis=1))
+            x = tf.concat([tf.reduce_mean(x, axis=0, keepdims=true), op_embedding, communication_masks[i]], axis=1)
+            x = tf.squeeze(self.final_linear(self.hidden(x)))
+            all_logis.append(x)
 
-        return x
+        return tf.nn.log_softmax(tf.concat(all_logis, axis=0))
 
-def encode_features_no_runtime(record):
-    pass
+def encode_features_no_runtime(state):
+    record = state.record
+    return record['op_feats'], record['device_feats'], record['tensor_feats'], record['link_feats'], record['place_feats']
 
-def encode_features(record, nodemask, ncclmask, psmask, feedback):
+def encode_features(state):
+    record, feedback = state.record, state.feedback
+    assert feedback is not None
+
     CL2, Bmax = record['scaler']
 
     op_feedbacks = []
-    for node in record['gdef'].node:
-        # if node.name not in feedback['op_makespan'] or node.name not in feedback['op_idle_after']:
-            # info(node.name)
+    for group in record['op_groups']:
+        op_makespan = 0 # TODO: use the overall makespan of the group, rather than the average of each op
+        op_idle_after = 0
+        for node_id in group:
+            node = record['gdef'][node_id]
+            # if node.name not in feedback['op_makespan'] or node.name not in feedback['op_idle_after']:
+                # info(node.name)
+            op_makespan += feedback['op_makespan'].get(node.name, 0) / CL2 # the ratio of makespan and computation time?
+            op_idle_after += feedback['op_idle_after'].get(node.name, 0) / CL2
 
         op_feedbacks.append([
-            feedback['op_makespan'].get(node.name, 0) / CL2, # the ratio of makespan and computation time?
-            feedback['op_idle_after'].get(node.name, 0) / CL2,
+            op_makespan / len(group),
+            op_idle_after / len(group),
         ])
+
+    op_communication_strategy = [ None for gid in range(len(record['op_groups'])) ]
+    for s_gid, gid in enumerate(state.sorted_groups_indices):
+        op_communication_strategy[gid] = state.get_action(s_gid).to_mask()[1]
 
     op_feats = np.hstack((
         record["op_feats"],
-        # np.reshape(ncclmask, (-1, 1)), # TODO: expand if grouped
-        np.reshape(feedback['leftout'], (-1, 1)),
+        op_communication_strategy, # TODO: how to feed the sfb?
         op_feedbacks
     ))
+
     device_feats = np.hstack((
         record["device_feats"],
-        np.reshape(feedback['device_total_utilization'], (-1, 1)),
-        np.array([[feedback['device_peak_memory'][i] / record['topo_spec'].tasks[record['devices'][i][1]].memory] for i in range(len(record['devices'])) ]),
+        [ [ max( feedback['device_peak_memory'][i] / record['topo_spec'].tasks[tid].memory for i in range(len(record['device_segments'])) if tid == record['device_segments'][i] ) ] for tid in range(record['topo_spec'].ntasks) ],
+        [ [ np.average( feedback['device_total_utilization'][i] for i in range(len(record['device_segments'])) if tid == record['device_segments'][i] ) ] for tid in range(record['topo_spec'].ntasks) ]
     ))
+
     tensor_feats = record["tensor_feats"]
+
     link_feats = record["link_feats"]
 
-    place_extra = []
-    for g_id, group in enumerate(record['groups']):
-        for op_id in group:
-            for dev_id in range(len(record['devices'])):
-                place_extra.append([ nodemask[g_id, dev_id], int(psmask[g_id] == dev_id) ])
+    placement_matrix = [ None for gid in range(len(record['op_groups'])) ]
+    for s_gid, gid in enumerate(state.sorted_groups_indices):
+        placement_matrix[gid] = state.get_action(s_gid).to_mask()[0]
+
+    for gid in range(len(record['op_groups'])):
+        for tid in range(record['topo_spec'].ntasks):
+            place_extra.append([ placement_matrix[gid][tid] ])
 
     place_feats = np.hstack((
         record["place_feats"],
-        np.array(place_extra),
+        place_extra,
     ))
 
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
-def policy(record, gnn, decoder, state):
-    pass
+def policy(state, placement_masks, communication_masks, gnn, decoder):
+
+    encode_features()

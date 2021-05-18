@@ -40,7 +40,6 @@ BASE_NCCL_MODEL = [0.043420241077615454, 368.2013618677043, 0.27766802543921265,
 def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     device_list = [(device_name(task_id, index), task_id) for task_id, task in enumerate(topo_spec.tasks) for index in range(task.number)]
     device_segment = [ task_id for device_name, task_id in device_list ]
-    device_group = list(groupby(enumerate(device_segment), key=cadr, value=car).values())
 
     device_feats = np.array([[task.number, task.memory, task.intra_bandwidth] for task in topo_spec.tasks], dtype=float)
 
@@ -184,13 +183,12 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
         "gdef": gdef,
         "prof_data": prof_data,
         "topo_spec": topo_spec,
-        "device_list": device_list,
 
         "op_groups": op_groups,
         "op_segments": op_segment,
         "op_feats": op_feats,
 
-        "device_groups": device_group,
+        "device_list": device_list,
         "device_segments": device_segment,
         "device_feats": device_feats,
 
@@ -297,8 +295,8 @@ def gen_random_topology(model_size):
 
     gpu_models = ('1080ti', 'v100')
     gpu_memory = {
-        '1080ti': 9<<30,
-        'v100': 12<<30
+        '1080ti': 10<<30,
+        'v100': 14<<30
     }
     intra_links = (8000, 50000) # PCI, nvlink
     inter_links = (2810, 5000) # diff rack, same rack
@@ -319,10 +317,11 @@ def gen_random_topology(model_size):
         tasks.append(task)
 
     n = len(tasks)
+    racks = [ np.random.randint(n) for _ in range(n) ]
     inter_bandwidth = [ [0 for _ in range(n)] for _ in range(n) ]
     for i in range(n):
         for j in range(i+1):
-            bandwidth = np.random.choice(inter_links)
+            bandwidth = inter_links[0] if racks[i] != racks[j] else inter_links[1]
             inter_bandwidth[i][j] = bandwidth
             inter_bandwidth[j][i] = bandwidth
 

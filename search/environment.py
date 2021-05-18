@@ -15,7 +15,7 @@ def evaluate_with_feedback(state, trace=""):
 
     strategy = {}
     for gid, group in enumerate(state.sorted_groups):
-        action = state.actions[gid] if gid < len(state.actions) else state.actions[0]
+        action = state.get_action(gid)
 
         placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
         placed_devices = np.nonzero(placed_devices_mask)[0]

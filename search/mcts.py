@@ -57,7 +57,40 @@ class State:
         if i < len(self.actions):
             return self.actions[i]
         else:
-            return self.acitons[0]
+            return self.actions[0]
+
+    def dump_strategy(self):
+        record = self.record
+        gdef = record['gdef']
+        devices = record['device_list']
+        batchsize = record['batchsize']
+
+        strategy = {}
+        for gid, group in enumerate(self.sorted_groups):
+            action = self.get_action(gid)
+
+            placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
+            placed_devices = np.nonzero(placed_devices_mask)[0]
+
+            if action[1] == 0: # PS
+                for node_id in group:
+                    s = [ -1-placed_devices[node_id % len(placed_devices)] ]
+                    s.extend(placed_devices_mask)
+                    strategy[gdef.node[node_id].name] = s
+            elif action[1] == 1: # NCCL
+                s = [ 1 ]
+                s.extend(placed_devices_mask)
+                for node_id in group:
+                    strategy[gdef.node[node_id].name] = s
+            elif action[1] == 2: # MP
+                costs = [ int(self.record['parameter_sizes'][i] / 100000) for i in group ]
+                assignments = metis(gdef, self.record['base_groups'], costs, len(placed_devices), group, batchsize, balance_factor=2.)
+                for node_id, assignment in zip(group, assignments):
+                    s = [0] * (1 + len(placed_devices))
+                    s[assignment+1] = 1
+                    strategy[gdef.node[node_id].name] = s
+
+        return strategy
 
     @staticmethod
     def new(record):

@@ -1,13 +1,24 @@
 import os
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import tensorflow as tf
+from tensorflow.distribute.cluster_resolver import TFConfigClusterResolver
+import json
 
 def serve_tf(list, index, protocol):
-    import tensorflow as tf
-
-    tf.distribute.Server(tf.train.ClusterSpec({
-        "tge": list
-    }), job_name='tge', task_index=index, protocol=protocol).join()
+    clus = dict()
+    clus["cluster"] = {"worker":list}
+    clus["task"] = {"type":"worker","index":index}
+    os.environ["TF_CONFIG"] = json.dumps(clus)
+    resolver = TFConfigClusterResolver()
+    cluster = resolver.cluster_spec()
+    dist = tf.distribute.experimental.MultiWorkerMirroredStrategy(
+        tf.distribute.experimental.CollectiveCommunication.NCCL)
+    config = dist.update_config_proto(tf.ConfigProto())
+    config.ClearField("device_filters")
+    config.allow_soft_placement = True  # log_device_placement=True)
+    config.gpu_options.allow_growth = True
+    tf.distribute.Server(cluster, job_name='worker', task_index=index, protocol=protocol,config=config).join()
 
 pid = 0
 

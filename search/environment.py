@@ -9,44 +9,17 @@ import json
 
 def evaluate_with_feedback(state, trace=""):
     record = state.record
-    gdef = record['gdef']
-    devices = record['device_list']
-    batchsize = record['batchsize']
+    strategy = state.dump_strategy()
 
-    strategy = {}
-    for gid, group in enumerate(state.sorted_groups):
-        action = state.get_action(gid)
-
-        placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
-        placed_devices = np.nonzero(placed_devices_mask)[0]
-
-        if action[1] == 0: # PS
-            for node_id in group:
-                s = [ -1-placed_devices[node_id % len(placed_devices)] ]
-                s.extend(placed_devices_mask)
-                strategy[gdef.node[node_id].name] = s
-        elif action[1] == 1: # NCCL
-            s = [ 1 ]
-            s.extend(placed_devices_mask)
-            for node_id in group:
-                strategy[gdef.node[node_id].name] = s
-        elif action[1] == 2: # MP
-            costs = [ int(state.record['parameter_sizes'][i] / 100000) for i in group ]
-            assignments = metis(gdef, state.record['base_groups'], costs, len(placed_devices), group, batchsize, balance_factor=2.)
-            for node_id, assignment in zip(group, assignments):
-                s = [0] * (1 + len(placed_devices))
-                s[assignment+1] = 1
-                strategy[gdef.node[node_id].name] = s
-
-    tge = TGE(gdef, [device for device, _ in devices], sinks=["Adam"])
+    tge = TGE(record['gdef'], [device for device, _ in record['device_list']], sinks=["Adam"])
     tge.set_strategy(strategy)
-    tge.fill_batchsize(batchsize)
-    tge.replace_placeholder(batchsize)
+    tge.fill_batchsize(record['batchsize'])
+    tge.replace_placeholder(record['batchsize'])
     tge.set_topology(*record["topology_for_simulator"])
     tge.set_nccl_model(record["nccl_models"])
 
     temp_path = tempfile.mktemp()
-    time, mem = tge.evaluate(record["prof_data"].to_tge(record["topo_spec"], batchsize), chrome_path=trace, dump_path=temp_path)
+    time, mem = tge.evaluate(record["prof_data"].to_tge(record["topo_spec"], record['batchsize']), chrome_path=trace, dump_path=temp_path)
     feedback = json.load(open(temp_path, "r"))
     feedback["peak_memory"] = mem
     os.remove(temp_path)

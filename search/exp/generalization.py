@@ -2,8 +2,6 @@ import numpy as np
 import itertools
 import copy
 import tge
-from dataclasses import dataclass
-from typing import Any
 from data import TopoSpec, TopoSpecTask, ProfileData, gen_data, gen_random_topology,estimate_model_size
 from grouping import group_with_topk_nodes, group_with_tge_basegroups
 from utils import info, load

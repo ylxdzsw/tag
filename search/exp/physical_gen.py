@@ -16,16 +16,17 @@ if __name__ == '__main__':
 
     gdef = load('raw_data/{}/model.pickle'.format(m))
     prof_data = ProfileData(m)
-    batchsize = prof_data.maximum_batchsize()
+    batchsize = max(prof_data.maximum_batchsize() * 4, 16)
     tge.simplify_graph(gdef, sinks=["Adam", "init"])
 
     topo = TopoSpec([
-        TopoSpecTask('1080ti', 9<<30, 8000, 2),
-        TopoSpecTask('1080ti', 9<<30, 8000, 2),
-        TopoSpecTask('v100',   12<<30, 8000, 4),
-    ], [[4000, 4000, 4000],
-        [4000, 4000, 4000],
-        [4000, 4000, 4000]])
+        TopoSpecTask('v100', 30<<30, 20000, 4),
+        TopoSpecTask('p100', 10<<30, 6000, 2),
+        TopoSpecTask('p100', 10<<30, 6000, 2),
+        TopoSpecTask('1080ti', 9<<30, 6000, 2),
+        TopoSpecTask('1080ti', 9<<30, 6000, 2),
+        TopoSpecTask('v100', 14<<30, 6000, 4),
+    ], [[4000 for _ in range(6)] for _ in range(6)])
 
     record = gen_data(gdef, prof_data, batchsize, topo)
 
@@ -34,7 +35,7 @@ if __name__ == '__main__':
     def trace_fun(value, actions):
         trace.append((value, actions))
         info(value, actions)
-    best, best_actions = Tree(None, real_topo=True).playout(state, 500, trace_fun)
+    best, best_actions = Tree(None, real_topo=True).playout(state, 2000, trace_fun)
     info("best:", best, best_actions)
 
     state.actions = best_actions

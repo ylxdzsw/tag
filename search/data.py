@@ -87,6 +87,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     costs = [ int(x) for x in np.sqrt(np.mean(computation_times, (1,2))) ] #  + np.sqrt(parameter_sizes)
     op_groups = group_with_metis(gdef, base_groups, costs, batchsize, n_groups=40)
     # op_groups = group_with_topk_nodes(gdef, base_groups, prof_data, n_groups=40)
+    op_groups = sorted(op_groups, key=lambda group: -np.sum([ np.average(computation_times[node_id, :, 0]) for node_id in group ])) # largest computation time first
     op_segment = [0] * len(gdef.node)
     for group_id, ops in enumerate(op_groups):
         for node_id in ops:
@@ -130,20 +131,20 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
     edge_place = ([], [])
     edge_serve = ([], [])
 
+    for gid in range(len(op_groups)):
+        for tid in range(topo_spec.ntasks):
+            place_id = len(place_dict)
+            place_dict[(gid, tid)] = place_id
+            edge_place[0].append(gid)
+            edge_place[1].append(tid)
+            edge_serve[0].append(tid)
+            edge_serve[1].append(gid)
+            place_feats.append([ 0 ] * 4)
+
     for op_id in range(n_op):
         for dev_id in range(n_dev):
-            gop, gdev = op_segment[op_id], device_segment[dev_id]
-
-            if (gop, gdev) in place_dict:
-                place_id = place_dict[(gop, gdev)]
-            else:
-                place_id = len(place_dict)
-                place_dict[(gop, gdev)] = place_id
-                edge_place[0].append(gop)
-                edge_place[1].append(gdev)
-                edge_serve[0].append(gdev)
-                edge_serve[1].append(gop)
-                place_feats.append([ 0 ] * 4)
+            gid, tid = op_segment[op_id], device_segment[dev_id]
+            place_id = place_dict[(gid, tid)]
 
             for x in range(4):
                 place_feats[place_id][x] += computation_times[op_id, dev_id, x]
@@ -184,12 +185,12 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
         "prof_data": prof_data,
         "topo_spec": topo_spec,
 
-        "op_groups": op_groups,
+        "op_groups": op_groups, # sorted with largest computation cost first
         "op_segments": op_segment,
         "op_feats": op_feats,
 
         "device_list": device_list,
-        "device_segments": device_segment,
+        "device_segments": device_segment, # sorted by task id
         "device_feats": device_feats,
 
         "tensor_feats": tensor_feats,
@@ -200,9 +201,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
         "link_feats": link_feats,
 
-        "base_groups": base_groups,
         "parameter_sizes": parameter_sizes,
-
         "scaler": (CL2, Bmax),
         "batchsize": batchsize,
         "topology_for_simulator": topology_for_simulator,
@@ -213,14 +212,15 @@ def get_all_data():
     records = []
 
     real_topo = TopoSpec([
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-        TopoSpecTask('v100',   12<<30, 5000, 4),
-    ], [[2810, 2810, 2810],
-        [2810, 2810, 2810],
-        [2810, 2810, 2810]])
+        TopoSpecTask('v100', 30<<30, 50000, 4),
+        TopoSpecTask('p100', 10<<30, 8000, 2),
+        TopoSpecTask('p100', 10<<30, 8000, 2),
+        TopoSpecTask('1080ti', 9<<30, 8000, 2),
+        TopoSpecTask('1080ti', 9<<30, 8000, 2),
+        TopoSpecTask('v100', 14<<30, 8000, 4),
+    ], [[4000 for _ in range(6)] for _ in range(6)])
 
-    for m in ("inception", "resnet", "vgg", "transformer", ): # (, "bert", "berts" "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
+    for m in ("inception", "resnet", "vgg", "transformer", "bert", "berts"): # (, "bert", "berts" "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
         gdef = load('raw_data/{}/model.pickle'.format(m))
         prof_data = ProfileData(m)
         tge.simplify_graph(gdef, sinks=["Adam"])
@@ -293,9 +293,10 @@ def device_name(task_id, index):
 def gen_random_topology(model_size):
     total_memory = 0
 
-    gpu_models = ('1080ti', 'v100')
+    gpu_models = ('p100', '1080ti', 'v100')
     gpu_memory = {
-        '1080ti': 10<<30,
+        'p100': 10<<30,
+        '1080ti': 9<<30,
         'v100': 14<<30
     }
     intra_links = (8000, 50000) # PCI, nvlink
@@ -303,7 +304,7 @@ def gen_random_topology(model_size):
     card_numbers = (2, 4)
 
     tasks = []
-    for _ in range(4): # at most 4 tasks
+    for _ in range(6): # at most 6 tasks
         if len(tasks) >= 2 and total_memory > 2 * model_size and np.random.rand() < .5:
             break
 
@@ -339,7 +340,7 @@ def estimate_model_size(gdef, batchsize):
     return sum(parameter_sizes) * 4
 
 class ProfileData:
-    ALL_GTYPES = ('1080ti', 'v100')
+    ALL_GTYPES = ('p100', '1080ti', 'v100')
 
     def __init__(self, model_name):
         self.data = {}

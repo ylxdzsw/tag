@@ -219,9 +219,7 @@ def encode_features(state):
             op_idle_after / len(group),
         ])
 
-    op_communication_strategy = [ None for gid in range(len(record['op_groups'])) ]
-    for s_gid, gid in enumerate(state.sorted_groups_indices):
-        op_communication_strategy[gid] = state.get_action(s_gid).to_mask()[1]
+    op_communication_strategy = [ state.get_action(gid).to_mask()[1] for gid in range(len(record['op_groups'])) ]
 
     op_feats = np.hstack((
         record["op_feats"],
@@ -239,13 +237,11 @@ def encode_features(state):
 
     link_feats = record["link_feats"]
 
-    placement_matrix = [ None for gid in range(len(record['op_groups'])) ]
-    for s_gid, gid in enumerate(state.sorted_groups_indices):
-        placement_matrix[gid] = state.get_action(s_gid).to_mask()[0]
-
+    place_extra = []
     for gid in range(len(record['op_groups'])):
+        placement = state.get_action(gid).to_mask()[0]
         for tid in range(record['topo_spec'].ntasks):
-            place_extra.append([ placement_matrix[gid][tid] ])
+            place_extra.append([ placement[tid] ])
 
     place_feats = np.hstack((
         record["place_feats"],

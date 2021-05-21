@@ -24,8 +24,6 @@ class Action:
 @dataclass
 class State:
     record: Any
-    sorted_groups_indices: Any
-    sorted_groups: Any
     dp_time: Any
     actions: Any # the actions taken so far. The rest nodes uses the first action (same strategy as the most computational expensive group)
     feedback: Any
@@ -37,19 +35,20 @@ class State:
         return x
 
     def finished(self):
-        return len(self.actions) >= len(self.sorted_groups)
+        return len(self.actions) >= len(self.record['op_groups'])
 
     def fill_cache(self):
         gdef, topo_spec, prof_data, batchsize = self.record['gdef'], self.record['topo_spec'], self.record['prof_data'], self.record['batchsize']
-        self.sorted_groups_indices = sorted(list(range(len(self.record['op_groups']))), key=lambda i: -np.sum([ prof_data.get('1080ti', batchsize)[gdef.node[node_id].name] for node_id in self.record['op_groups'][i] ])) # largest computation time first
-        self.sorted_groups = [ self.record['op_groups'][i] for i in self.sorted_groups_indices ]
 
         state_copy = self.clone()
-        state_copy.actions.append(([1 for _ in range(len(topo_spec.tasks))], 1))
-        time, _ = evaluate_with_feedback(state_copy)
+        state_copy.actions = [([1 for _ in range(len(topo_spec.tasks))], 1)]
+        time, feedback = evaluate_with_feedback(state_copy)
 
-        # TODO: if OOM, use MP as baseline
-        # TODO: save to record
+        if invalidity(state_copy.record, feedback) > 0: # if OOM, use MP as baseline
+            state_copy.actions = [([1 for _ in range(len(topo_spec.tasks))], 2)]
+            time, feedback = evaluate_with_feedback(state_copy)
+
+        # TODO: save cache to record? or generate this in data.py?
         self.dp_time = time
         return self
 
@@ -66,7 +65,7 @@ class State:
         batchsize = record['batchsize']
 
         strategy = {}
-        for gid, group in enumerate(self.sorted_groups):
+        for gid, group in enumerate(self.record['op_groups']):
             action = self.get_action(gid)
 
             placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
@@ -84,17 +83,18 @@ class State:
                     strategy[gdef.node[node_id].name] = s
             elif action[1] == 2: # MP
                 costs = [ int(self.record['parameter_sizes'][i] / 100000) for i in group ]
-                assignments = metis(gdef, self.record['base_groups'], costs, len(placed_devices), group, batchsize, balance_factor=2.)
+                # single card placement does not have base_group restriction.
+                assignments = metis(gdef, [[i] for i in range(len(gdef.node))], costs, len(placed_devices), group, batchsize, balance_factor=1.5)
                 for node_id, assignment in zip(group, assignments):
-                    s = [0] * (1 + len(placed_devices))
-                    s[assignment+1] = 1
+                    s = [0] * (1 + len(devices))
+                    s[placed_devices[assignment]+1] = 1
                     strategy[gdef.node[node_id].name] = s
 
         return strategy
 
     @staticmethod
     def new(record):
-        return State(record, None, None, 0, [], None).fill_cache()
+        return State(record, 0, [], None).fill_cache()
 
 class Node:
     def __init__(self, action):
@@ -166,9 +166,16 @@ class Node:
             for child in self.children:
                 child.p = 1 / len(self.children)
 
+        np.random.shuffle(self.children)
+
     def evaluate(self, state):
         if self.value is None:
             time, feedback = evaluate_with_feedback(state)
+
+            # if invalidity(state.record, feedback) > 0:
+            #     info("OOM")
+            # info(state.dp_time, time, [x / 1000_000 for x in feedback["peak_memory"]])
+
             speed_up = -1 if invalidity(state.record, feedback) > 0 else state.dp_time / time - 1
             self.value = speed_up
             state.feedback = feedback

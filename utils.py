@@ -21,8 +21,8 @@ def setup_workers(workers, protocol="grpc"):
     time.sleep(1)
 
     return tf.distribute.Server(tf.train.ClusterSpec({
-        "tge": workers
-    }), job_name='tge', task_index=0, protocol=protocol)
+        "worker": workers
+    }), job_name='worker', task_index=0, protocol=protocol)
 
 def op_def_dict():
     import tensorflow.core.framework as tfpb

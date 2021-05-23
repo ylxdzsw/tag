@@ -9,8 +9,19 @@ import itertools
 import copy
 from utils import info, load
 
+# g1: 10.28.1.16, p100 x 2
+# g2: 10.28.1.17, p100 x 2
+# g7: 10.28.1.22, 1080ti x 2
+# g8: 10.28.1.23, 1080ti x 2
+# g9: 10.28.1.24, 1080ti x 2
+# g10: 10.28.1.25, 1080ti x 2
+# g11: 10.28.1.26, v100 x 4
+# g12: 10.28.1.27, v100+ x 4
+
+# "10.28.1.27:3806", "10.28.1.16:3901", "10.28.1.17:3901", "10.28.1.24:3901", "10.28.1.25:3901", "10.28.1.26:3901"
+
 import os
-os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.24:3806", "10.28.1.25:3901", "10.28.1.26:3901"] }, "task": {"type": "worker", "index": 0} }'
+os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.27:3806", "10.28.1.26:3901", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901"] }, "task": {"type": "worker", "index": 0} }'
 
 def setup_workers(workers, protocol="grpc"):
     import urllib.request
@@ -23,17 +34,30 @@ def setup_workers(workers, protocol="grpc"):
         assert urllib.request.urlopen(url).read() == b'ok'
     time.sleep(1)
 
-setup_workers(["10.28.1.24:3806", "10.28.1.25:3901", "10.28.1.26:3901"])
+setup_workers(["10.28.1.27:3806", "10.28.1.26:3901", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901"])
 
 devices = (
     "/job:worker/replica:0/task:0/device:GPU:0",
     "/job:worker/replica:0/task:0/device:GPU:1",
+    "/job:worker/replica:0/task:0/device:GPU:2",
+    "/job:worker/replica:0/task:0/device:GPU:3",
+
     "/job:worker/replica:0/task:1/device:GPU:0",
     "/job:worker/replica:0/task:1/device:GPU:1",
+    "/job:worker/replica:0/task:1/device:GPU:2",
+    "/job:worker/replica:0/task:1/device:GPU:3",
+
     "/job:worker/replica:0/task:2/device:GPU:0",
     "/job:worker/replica:0/task:2/device:GPU:1",
-    "/job:worker/replica:0/task:2/device:GPU:2",
-    "/job:worker/replica:0/task:2/device:GPU:3",
+
+    "/job:worker/replica:0/task:3/device:GPU:0",
+    "/job:worker/replica:0/task:3/device:GPU:1",
+
+    "/job:worker/replica:0/task:4/device:GPU:0",
+    "/job:worker/replica:0/task:4/device:GPU:1",
+
+    "/job:worker/replica:0/task:5/device:GPU:0",
+    "/job:worker/replica:0/task:5/device:GPU:1",
 )
 
 resolver = TFConfigClusterResolver()
@@ -52,12 +76,13 @@ server = tf.distribute.Server(cluster, job_name='worker', task_index=0, protocol
 
 # raise SystemExit
 
-# {'/job:worker/replica:0/task:0/device:GPU:0': [0.9584070443184248, 217.88718452314646, 0.21059811925140928, 223.5791934731678], '/job:worker/replica:0/task:1/device:GPU:0': [0.3714652630154233, 267.32093923984735, 0.2108443866768448, 211.22138885962116], '/job:worker/replica:0/task:2/device:GPU:0': [0.5378632532562655, 452.3317530440628, 0.1939005431393334, 517.9556800667694], '/job:worker/replica:0/task:0/device:GPU:0,/job:worker/replica:0/task:1/device:GPU:0': [0.5212558559955102, 357.4631960568025, 0.2744714020116987, 305.07792803331535], '/job:worker/replica:0/task:0/device:GPU:0,/job:worker/replica:0/task:2/device:GPU:0': [-0.0374282614817747, 508.69988218682647, 0.2612657083390182, 286.2716917866893], '/job:worker/replica:0/task:1/device:GPU:0,/job:worker/replica:0/task:2/device:GPU:0': [0.11458482532105904, 492.3139957929465, 0.261508923354283, 293.04110118062215], '/job:worker/replica:0/task:0/device:GPU:0,/job:worker/replica:0/task:1/device:GPU:0,/job:worker/replica:0/task:2/device:GPU:0': [0.1472075204785818, 488.6477998063673, 0.3076460973921253, 0.00013946418923570407]}
 
 import sys
 data_path = sys.argv[1]
 
 gdef, prof_data, batchsize, strategy = load(data_path)
+
+strategy = { node.name: [1] + [1 for _ in devices] for node in gdef.node }
 
 g = (tge.TGE(gdef, devices)
     .set_strategy(strategy)
@@ -73,20 +98,22 @@ graph = tf.get_default_graph()
 opt = graph.get_operation_by_name("import/Adam/replica_0")
 init = graph.get_operation_by_name("import/init/replica_0")
 
+print("start session, preparing")
 sess = tf.Session(server.target, config=config)
 sess.run(init)
 sess.run(opt)
 
-run_meta = tf.compat.v1.RunMetadata()
-run_opt = tf.compat.v1.RunOptions(trace_level=tf.RunOptions.FULL_TRACE, output_partition_graphs=True)
-sess.run(opt, options=run_opt, run_metadata=run_meta)
+# run_meta = tf.compat.v1.RunMetadata()
+# run_opt = tf.compat.v1.RunOptions(trace_level=tf.RunOptions.FULL_TRACE, output_partition_graphs=True)
+# sess.run(opt, options=run_opt, run_metadata=run_meta)
 
-with open("meta_{}.pb".format(data_path), "w") as fo:
-    fo.write(pbtf.MessageToString(run_meta))
+# with open("meta_{}.pb".format(data_path), "w") as fo:
+#     fo.write(pbtf.MessageToString(run_meta))
 
-tl = timeline.Timeline(run_meta.step_stats)
-with open("timeline_{}.json".format(data_path), "w") as fo:
-    fo.write(tl.generate_chrome_trace_format())
+# tl = timeline.Timeline(run_meta.step_stats)
+# with open("timeline_{}.json".format(data_path), "w") as fo:
+#     fo.write(tl.generate_chrome_trace_format())
+print("start training")
 
 for _ in range(3):
     sess.run(opt)

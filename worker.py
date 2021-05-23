@@ -40,6 +40,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if pid != 0:
             os.kill(pid, 9)
+            time.sleep(2)
 
         pid = os.fork()
         if pid == 0:

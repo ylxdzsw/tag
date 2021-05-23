@@ -24,7 +24,7 @@ class Action:
 @dataclass
 class State:
     record: Any
-    dp_time: Any
+    baseline: Any # (time, action)
     actions: Any # the actions taken so far. The rest nodes uses the first action (same strategy as the most computational expensive group)
     feedback: Any
 
@@ -41,18 +41,22 @@ class State:
         gdef, topo_spec, prof_data, batchsize = self.record['gdef'], self.record['topo_spec'], self.record['prof_data'], self.record['batchsize']
 
         state_copy = self.clone()
-        state_copy.actions = [([1 for _ in range(len(topo_spec.tasks))], 1)]
+        base_action = ([1 for _ in range(len(topo_spec.tasks))], 1)
+        state_copy.actions = [base_action]
         time, feedback = evaluate_with_feedback(state_copy)
 
         if invalidity(state_copy.record, feedback) > 0: # if OOM, use MP as baseline
-            state_copy.actions = [([1 for _ in range(len(topo_spec.tasks))], 2)]
+            base_action = ([1 for _ in range(len(topo_spec.tasks))], 2)
+            state_copy.actions = [base_action]
             time, feedback = evaluate_with_feedback(state_copy)
 
         # TODO: save cache to record? or generate this in data.py?
-        self.dp_time = time
+        self.baseline = time, base_action
         return self
 
     def get_action(self, i):
+        if len(self.actions) == 0:
+            return self.baseline[1]
         if i < len(self.actions):
             return self.actions[i]
         else:
@@ -101,6 +105,7 @@ class Node:
         self.action = action
         self.p = 0
         self.q = 0
+        self.c = 0
         self.n_visits = 0
         self.children = []
         self.value = None
@@ -128,7 +133,7 @@ class Node:
         return max(self.children, key=lambda x: x.puct(self.n_visits))
 
     def puct(self, pvisit):
-        return self.q + 1.4 * self.p * np.sqrt(pvisit) / (1 + self.n_visits)
+        return self.q + self.c * self.p * np.sqrt(pvisit) / (1 + self.n_visits)
 
     def update(self, leaf_value):
         self.n_visits += 1
@@ -149,11 +154,10 @@ class Node:
                     continue
 
                 action = placement, communication
-                child = Node(action)
-                if len(state.actions) > 0 and action == state.actions[0]: # TODO: should we do this?
-                    child.n_visits += self.n_visits
+                self.children.append(Node(action))
 
-                self.children.append(child)
+        for child in self.children:
+            child.c = np.sqrt(len(self.children) / 10)
 
         if options.policy_fun is not None:
             masks = [ child.action.to_mask() for child in self.children ]
@@ -174,9 +178,11 @@ class Node:
 
             # if invalidity(state.record, feedback) > 0:
             #     info("OOM")
-            # info(state.dp_time, time, [x / 1000_000 for x in feedback["peak_memory"]])
+            # info(state.baseline[0], time, [x / 1000_000 for x in feedback["peak_memory"]])
 
-            speed_up = -1 if invalidity(state.record, feedback) > 0 else state.dp_time / time - 1
+            speed_up = -1 if invalidity(state.record, feedback) > 0 else state.baseline[0] / time - 1
+            if speed_up > 1:
+                speed_up = np.sqrt(np.sqrt(speed_up))
             self.value = speed_up
             state.feedback = feedback
         return self.value

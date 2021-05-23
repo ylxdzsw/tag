@@ -18,10 +18,16 @@ from utils import info, load
 # g11: 10.28.1.26, v100 x 4
 # g12: 10.28.1.27, v100+ x 4
 
-# "10.28.1.27:3806", "10.28.1.16:3901", "10.28.1.17:3901", "10.28.1.24:3901", "10.28.1.25:3901", "10.28.1.26:3901"
+from contextlib import contextmanager
+@contextmanager
+def measure_time(name):
+    tic = time.perf_counter()
+    yield
+    toc = time.perf_counter()
+    print("{}: {:.3g}s".format(name, toc - tic))
 
 import os
-os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.27:3806", "10.28.1.26:3901", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901"] }, "task": {"type": "worker", "index": 0} }'
+os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.27:3806", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901", "10.28.1.17:3901", "10.28.1.16:3901"] }, "task": {"type": "worker", "index": 0} }'
 
 def setup_workers(workers, protocol="grpc"):
     import urllib.request
@@ -34,7 +40,7 @@ def setup_workers(workers, protocol="grpc"):
         assert urllib.request.urlopen(url).read() == b'ok'
     time.sleep(1)
 
-setup_workers(["10.28.1.27:3806", "10.28.1.26:3901", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901"])
+setup_workers(["10.28.1.27:3806", "10.28.1.25:3901", "10.28.1.24:3901", "10.28.1.23:3901", "10.28.1.22:3901", "10.28.1.17:3901", "10.28.1.16:3901"])
 
 devices = (
     "/job:worker/replica:0/task:0/device:GPU:0",
@@ -44,8 +50,6 @@ devices = (
 
     "/job:worker/replica:0/task:1/device:GPU:0",
     "/job:worker/replica:0/task:1/device:GPU:1",
-    "/job:worker/replica:0/task:1/device:GPU:2",
-    "/job:worker/replica:0/task:1/device:GPU:3",
 
     "/job:worker/replica:0/task:2/device:GPU:0",
     "/job:worker/replica:0/task:2/device:GPU:1",
@@ -58,6 +62,9 @@ devices = (
 
     "/job:worker/replica:0/task:5/device:GPU:0",
     "/job:worker/replica:0/task:5/device:GPU:1",
+
+    "/job:worker/replica:0/task:6/device:GPU:0",
+    "/job:worker/replica:0/task:6/device:GPU:1",
 )
 
 resolver = TFConfigClusterResolver()
@@ -76,7 +83,6 @@ server = tf.distribute.Server(cluster, job_name='worker', task_index=0, protocol
 
 # raise SystemExit
 
-
 import sys
 data_path = sys.argv[1]
 
@@ -84,24 +90,29 @@ gdef, prof_data, batchsize, strategy = load(data_path)
 
 strategy = { node.name: [1] + [1 for _ in devices] for node in gdef.node }
 
-g = (tge.TGE(gdef, devices)
-    .set_strategy(strategy)
-    .replace_placeholder(batchsize)
-    # .verbose()
-    .compile()
-    .get_result()
-)
+with measure_time("edit graph"):
+    g = (tge.TGE(gdef, devices)
+        .set_strategy(strategy)
+        .replace_placeholder(batchsize)
+        # .verbose()
+        .compile()
+        .get_result()
+    )
 
-tf.import_graph_def(g)
-graph = tf.get_default_graph()
+with measure_time("prepare"):
+    tf.import_graph_def(g)
+    graph = tf.get_default_graph()
 
-opt = graph.get_operation_by_name("import/Adam/replica_0")
-init = graph.get_operation_by_name("import/init/replica_0")
+    opt = graph.get_operation_by_name("import/Adam/replica_0")
+    init = graph.get_operation_by_name("import/init/replica_0")
 
-print("start session, preparing")
-sess = tf.Session(server.target, config=config)
-sess.run(init)
-sess.run(opt)
+    sess = tf.Session(server.target, config=config)
+
+with measure_time("init"):
+    sess.run(init)
+for i in range(10):
+    with measure_time("warm up run round {}/10".format(i+1)):
+        sess.run(opt)
 
 # run_meta = tf.compat.v1.RunMetadata()
 # run_opt = tf.compat.v1.RunOptions(trace_level=tf.RunOptions.FULL_TRACE, output_partition_graphs=True)
@@ -113,13 +124,11 @@ sess.run(opt)
 # tl = timeline.Timeline(run_meta.step_stats)
 # with open("timeline_{}.json".format(data_path), "w") as fo:
 #     fo.write(tl.generate_chrome_trace_format())
-print("start training")
 
-for _ in range(3):
-    sess.run(opt)
+print("start training")
 tic = time.perf_counter()
 for _ in range(10):
     sess.run(opt)
 toc = time.perf_counter()
 
-print("time: {}".format((toc - tic) / 10))
+print("average time: {}".format((toc - tic) / 10))

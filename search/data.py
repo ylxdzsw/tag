@@ -215,14 +215,9 @@ def get_all_data():
 
     real_topo = TopoSpec([
         TopoSpecTask('v100', 30<<30, 8000, 4),
-        TopoSpecTask('v100', 14<<30, 5000, 4),
-        # TopoSpecTask('p100', 10<<30, 5000, 2),
-        # TopoSpecTask('p100', 10<<30, 5000, 2),
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-        TopoSpecTask('1080ti', 9<<30, 5000, 2),
-    ], [[2810 for _ in range(6)] for _ in range(6)])
+        TopoSpecTask('1080ti', 9<<30, 3000, 8),
+        TopoSpecTask('p100', 10<<30, 3000, 4),
+    ], [[2810 for _ in range(3)] for _ in range(3)])
 
     for m in ("inception", "resnet", "vgg", "transformer", "bert", "berts"): # (, "bert", "berts" "rnnlm2x", "rnnlm4x"): #  , "mobilenet", "nasnet"
         gdef = load('raw_data/{}/model.pickle'.format(m))

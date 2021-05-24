@@ -179,9 +179,9 @@ class Decoder(tf.keras.Model):
 
         hidden = 256
 
-        self.per_device_linear = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
-        self.hidden = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
-        self.final_linear = tf.keras.layers.Dense(node_hidden, activation=None)
+        self.per_device_linear = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
+        self.hidden = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
+        self.final_linear = tf.keras.layers.Dense(hidden, activation=None)
 
     def call(self, device_embeddings, op_embedding, placement_masks, communication_masks):
         all_logis = []
@@ -218,11 +218,11 @@ def encode_features(state):
         op_makespan = 0 # TODO: use the overall makespan of the group, rather than the average of each op
         op_idle_after = 0
         for node_id in group:
-            node = record['gdef'][node_id]
+            node_def = record['gdef'].node[node_id]
             # if node.name not in feedback['op_makespan'] or node.name not in feedback['op_idle_after']:
                 # info(node.name)
-            op_makespan += feedback['op_makespan'].get(node.name, 0) / CL2 # the ratio of makespan and computation time?
-            op_idle_after += feedback['op_idle_after'].get(node.name, 0) / CL2
+            op_makespan += feedback['op_makespan'].get(node_def.name, 0) / CL2 # the ratio of makespan and computation time?
+            op_idle_after += feedback['op_idle_after'].get(node_def.name, 0) / CL2
 
         op_feedbacks.append([
             op_makespan / len(group),

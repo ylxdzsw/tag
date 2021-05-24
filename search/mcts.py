@@ -1,6 +1,5 @@
 import numpy as np
 import itertools
-import copy
 import tge
 from dataclasses import dataclass
 from typing import Any
@@ -47,7 +46,7 @@ class State:
 
         # TODO: save cache to record? or generate this in data.py?
         self.baseline = time, base_action
-        self.result = (-1 if invalidity(state_copy.record, feedback) > 0 else 0), feedback
+        self.result = (-1 if invalidity(self.record, feedback) > 0 else 0), feedback
         return self
 
     def evaluate(self):
@@ -109,10 +108,12 @@ class State:
     # shallow copy except for the actions, and optionally append an action to the copy
     def clone(self, action=None):
         new_actions = [ action for action in self.actions ]
+        result = self.result
         if action is not None:
             new_actions.append(action)
+            result = None
 
-        return State(self.record, self.baseline, new_actions, None)
+        return State(self.record, self.baseline, new_actions, result)
 
 class Node:
     def __init__(self, state, action):
@@ -208,6 +209,8 @@ class Tree:
 
     def chroot(self, i):
         self.root = self.root.children[i]
+        if self.root.state.result is None:
+            self.root.state.evaluate()
 
 if __name__ == '__main__':
     import sys

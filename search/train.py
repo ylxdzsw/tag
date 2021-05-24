@@ -8,7 +8,6 @@ import collections
 from model import Model, policy
 from environment import evaluate_with_feedback, score, invalidity
 from utils import save, load, info
-from baseline import gen_baselines, eval_baselines, random_cross_node, random_shuffle_node, Trace
 from mcts import State, Action
 
 from multiprocessing import Pool

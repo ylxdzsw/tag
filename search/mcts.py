@@ -198,7 +198,7 @@ class Tree:
             if best == None or leaf_state.result[0] > best.result[0]:
                 best = leaf_state
             if trace_fun is not None:
-                trace_fun(leaf_state.result[0], leaf_state.actions)
+                trace_fun(leaf_state)
         return best
 
     def get_actions_and_probs(self):

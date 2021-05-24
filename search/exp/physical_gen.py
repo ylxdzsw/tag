@@ -7,7 +7,7 @@ from grouping import group_with_topk_nodes, group_with_tge_basegroups
 from utils import info, load, save
 from metis import metis
 from environment import evaluate_with_feedback, invalidity
-from mcts import State, Tree
+from mcts import Tree
 
 if __name__ == '__main__':
     import sys
@@ -27,21 +27,20 @@ if __name__ == '__main__':
 
     record = gen_data(gdef, prof_data, batchsize, topo)
 
-    state = State.new(record)
     trace = []
-    def trace_fun(value, actions):
-        trace.append((value, actions))
-        info(value, actions)
-    Tree(None, real_topo=True).playout(state, 2000, trace_fun)
+    def trace_fun(leaf_state):
+        trace.append(leaf_state)
+        info(leaf_state.result[0], leaf_state.actions)
+    Tree(record, None, real_topo=True).playout(2000, trace_fun)
 
     for ntimes in (50, 800, 2000):
-        value, actions = max(trace[:ntimes], key=lambda x: x[0])
-        info("best: ", ntimes, value, actions)
-        state.actions = actions
-        strategy = state.dump_strategy()
+        best_state = max(trace[:ntimes], key=lambda x: x.result[0])
+        info("best: ", ntimes, best_state.result[0], best_state.actions)
+        strategy = best_state.dump_strategy()
         save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_strategy_{}".format(m, ntimes))
 
-    state.actions = [state.baseline[1]]
+    base_state = copy.copy(trace[0])
+    base_state.actions = [base_state.baseline[1]]
     strategy = state.dump_strategy()
     save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_baseline".format(m))
 

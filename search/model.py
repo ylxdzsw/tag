@@ -209,8 +209,7 @@ def encode_features_no_runtime(state):
     return record['op_feats'], record['device_feats'], record['tensor_feats'], record['link_feats'], record['place_feats']
 
 def encode_features(state):
-    record, feedback = state.record, state.feedback
-    assert feedback is not None
+    record, feedback = state.record, state.result[1]
 
     CL2, Bmax = record['scaler']
 

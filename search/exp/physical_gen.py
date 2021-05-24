@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     gdef = load('raw_data/{}/model.pickle'.format(m))
     prof_data = ProfileData(m)
-    batchsize = max(prof_data.maximum_batchsize() * 2, 16)
+    batchsize = min(max(prof_data.maximum_batchsize() * 2, 32), 600)
     tge.simplify_graph(gdef, sinks=["Adam", "init"])
 
     topo = TopoSpec([
@@ -41,7 +41,7 @@ if __name__ == '__main__':
         strategy = state.dump_strategy()
         save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_strategy_{}".format(m, ntimes))
 
-    state.actions = [([1 for _ in range(len(topo.tasks))], 1)]
+    state.actions = [state.baseline[1]]
     strategy = state.dump_strategy()
-    save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_dp".format(m))
+    save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_baseline".format(m))
 

@@ -201,6 +201,7 @@ def gen_data(gdef, prof_data, batchsize, topo_spec: TopoSpec):
 
         "link_feats": link_feats,
 
+        "computation_times": computation_times,
         "parameter_sizes": parameter_sizes,
         "tensor_sizes": tensor_sizes,
 

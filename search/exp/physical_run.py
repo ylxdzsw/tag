@@ -88,8 +88,6 @@ data_path = sys.argv[1]
 
 gdef, prof_data, batchsize, strategy = load(data_path)
 
-strategy = { node.name: [1] + [1 for _ in devices] for node in gdef.node }
-
 with measure_time("edit graph"):
     g = (tge.TGE(gdef, devices)
         .set_strategy(strategy)
@@ -127,8 +125,8 @@ for i in range(10):
 
 print("start training")
 tic = time.perf_counter()
-for _ in range(10):
+for _ in range(50):
     sess.run(opt)
 toc = time.perf_counter()
 
-print("average time: {}".format((toc - tic) / 10))
+print("average time: {}".format((toc - tic) / 50))

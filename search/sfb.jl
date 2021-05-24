@@ -6,7 +6,7 @@ using SparseArrays
 
 α = 1
 
-data = JSON3.read(open("bert.json"));
+data = JSON3.read(stdin);
 B = data.B
 T = data.T
 M = data.M
@@ -50,4 +50,7 @@ model = Model(Cbc.Optimizer);
 
 optimize!(model)
 
-@info findall(value.(x) .>= .9) .- 1 M B batchsize
+JSON3.write(stdout, (
+    result=findall(value.(x) .>= .9) .- 1,
+    M, B, batchsize
+))

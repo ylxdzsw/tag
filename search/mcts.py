@@ -25,20 +25,14 @@ class Action:
 @dataclass
 class State:
     record: Any
-    baseline: Any # (time, action)
+    baseline: Any # (time, action) TODO: move to record
     actions: Any # the actions taken so far. The rest nodes uses the first action (same strategy as the most computational expensive group)
-    feedback: Any
-
-    # shallow copy except for the actions
-    def clone(self):
-        x = copy.copy(self)
-        x.actions = copy.deepcopy(self.actions)
-        return x
+    result: Any # (speedup, feedback)
 
     def finished(self):
         return len(self.actions) >= len(self.record['op_groups'])
 
-    def fill_cache(self):
+    def init(self):
         gdef, topo_spec, prof_data, batchsize = self.record['gdef'], self.record['topo_spec'], self.record['prof_data'], self.record['batchsize']
 
         state_copy = self.clone()
@@ -53,7 +47,18 @@ class State:
 
         # TODO: save cache to record? or generate this in data.py?
         self.baseline = time, base_action
+        self.result = (-1 if invalidity(state_copy.record, feedback) > 0 else 0), feedback
         return self
+
+    def evaluate(self):
+        if self.result is None:
+            time, feedback = evaluate_with_feedback(self)
+
+            speed_up = -1 if invalidity(self.record, feedback) > 0 else self.baseline[0] / time - 1
+            if speed_up > 1:
+                speed_up = np.sqrt(np.sqrt(speed_up))
+            self.result = speed_up, feedback
+        return self.result
 
     def get_action(self, i):
         if len(self.actions) == 0:
@@ -99,33 +104,38 @@ class State:
 
     @staticmethod
     def new(record):
-        return State(record, 0, [], None).fill_cache()
+        return State(record, None, [], None).init()
+
+    # shallow copy except for the actions, and optionally append an action to the copy
+    def clone(self, action=None):
+        new_actions = [ action for action in self.actions ]
+        if action is not None:
+            new_actions.append(action)
+
+        return State(self.record, self.baseline, new_actions, None)
 
 class Node:
-    def __init__(self, action):
+    def __init__(self, state, action):
         self.action = action
-        self.p = 0
-        self.q = 0
-        self.c = 0
+        self.state = state # the state after taking the action
+        self.p = 0 # prior probability of choosing this among all siblings
+        self.q = 0 # the average speedup when taking this action on this state
+        self.c = 0 # per-node parameter to control exploration vs exploitation
         self.n_visits = 0
         self.children = []
-        self.value = None
 
-    def playout_and_update_recursive(self, state, options):
+    def playout_and_update_recursive(self, options):
         if self.is_leaf():
-            if not state.finished():
-                self.expand(state, options)
-            if len(state.actions) == 0: # root at first
-                return 0.
-            leaf_value = self.evaluate(state)
-            self.update(leaf_value)
+            if not self.state.finished():
+                self.expand(options)
+            value, _ = self.state.evaluate()
+            self.update(value)
+            return self.state
 
-            return leaf_value
         child = self.select_child()
-        state.actions.append(child.action)
-        leaf_value = child.playout_and_update_recursive(state, options)
-        self.update(leaf_value)
-        return leaf_value
+        leaf_state = child.playout_and_update_recursive(options)
+        self.update(leaf_state.result[0])
+        return leaf_state
 
     def is_leaf(self):
         return len(self.children) == 0
@@ -140,74 +150,56 @@ class Node:
         self.n_visits += 1
         self.q += (leaf_value - self.q) / self.n_visits
 
-    def expand(self, state, options):
-        for placement in itertools.product([0, 1], repeat=len(state.record['topo_spec'].tasks)):
+    def expand(self, options):
+        record = self.state.record
+
+        for placement in itertools.product([0, 1], repeat=len(record['topo_spec'].tasks)):
             if sum(placement) == 0:
                 continue
 
-            ndevices = sum( state.record['topo_spec'].tasks[i].number for i in placement if i == 1 )
+            ndevices = sum( record['topo_spec'].tasks[i].number for i in placement if i == 1 )
 
             for communication in range(3):
                 if ndevices == 1 and communication != 0:
                     continue
 
-                if options.real_topo and state.record['batchsize'] % ndevices != 0 and communication != 2:
+                if options.real_topo and record['batchsize'] % ndevices != 0 and communication != 2:
                     continue
 
                 action = placement, communication
-                self.children.append(Node(action))
+                new_state = self.state.clone(self.action)
+                self.children.append(Node(new_state, action))
 
         for child in self.children:
             child.c = np.sqrt(len(self.children) / 10)
 
         if options.policy_fun is not None:
-            log_ps = policy_fun(state, (child.action for child in self.children))
+            log_ps = policy_fun(self.state, (child.action for child in self.children))
 
             for child, log_p in zip(self.children, log_ps):
                 info(child.action, np.exp(log_p))
-                child.p = np.exp(log_softmax)
+                child.p = np.exp(log_p)
         else:
             for child in self.children:
                 child.p = 1 / len(self.children)
 
         np.random.shuffle(self.children)
 
-    def evaluate(self, state):
-        if self.value is None:
-            time, feedback = evaluate_with_feedback(state)
-
-            # if invalidity(state.record, feedback) > 0:
-            #     info("OOM")
-            # info(state.baseline[0], time, [x / 1000_000 for x in feedback["peak_memory"]])
-
-            speed_up = -1 if invalidity(state.record, feedback) > 0 else state.baseline[0] / time - 1
-            if speed_up > 1:
-                speed_up = np.sqrt(np.sqrt(speed_up))
-            self.value = speed_up
-            state.feedback = feedback
-        return self.value
-
 class Tree:
-    def __init__(self, policy_fun, real_topo=False): # real_topo controls whether we should filter out the un-dividable replications
+    def __init__(self, record, policy_fun, real_topo=False): # real_topo controls whether we should filter out the un-dividable replications
         self.policy_fun = policy_fun
         self.real_topo = real_topo
-        self.root = Node(None)
+        self.root = Node(State.new(record), None)
 
-    def playout(self, state, ntimes, trace_fun=None):
-        best = -1
-        best_actions = None
+    def playout(self, ntimes, trace_fun=None):
+        best = None
         for n in range(ntimes):
-            state_clone = state.clone()
-            leaf_value = self.root.playout_and_update_recursive(state_clone, self)
-            if leaf_value > best:
-                best = leaf_value
-                best_actions = state_clone.actions
+            leaf_state = self.root.playout_and_update_recursive(self)
+            if best == None or leaf_state.result[0] > best.result[0]:
+                best = leaf_state
             if trace_fun is not None:
-                trace_fun(leaf_value, state_clone.actions)
-        return best, best_actions
-
-    def get_action(self):
-        return max(self.root.children, key=lambda x: x.n_visits).action
+                trace_fun(leaf_state.result[0], leaf_state.actions)
+        return best
 
     def get_actions_and_probs(self):
         assert len(self.root.children) > 0
@@ -235,6 +227,5 @@ if __name__ == '__main__':
     tge.simplify_graph(gdef, sinks=["Adam"])
 
     record = gen_data(gdef, prof_data, prof_data.maximum_batchsize(), topo)
-
-    state = State(record, None, 0, []).fill_cache()
-    print(Tree(None).playout(state, 800))
+    best = Tree(record, None).playout(800)
+    print(best.result[0], best.actions)

@@ -9,6 +9,7 @@ from grouping import group_with_topk_nodes, group_with_tge_basegroups
 from utils import info, load
 from metis import metis
 from environment import evaluate_with_feedback, invalidity
+from scipy.special import softmax
 
 @dataclass
 class Action:
@@ -160,11 +161,10 @@ class Node:
             child.c = np.sqrt(len(self.children) / 10)
 
         if options.policy_fun is not None:
-            masks = [ child.action.to_mask() for child in self.children ]
-            log_softmaxs = policy_fun(state, *zip(*masks))
+            log_ps = policy_fun(state, (child.action for child in self.children))
 
-            for child, log_softmax in zip(self.children, log_softmaxs):
-                info(child.action, np.exp(log_softmax))
+            for child, log_p in zip(self.children, log_ps):
+                info(child.action, np.exp(log_p))
                 child.p = np.exp(log_softmax)
         else:
             for child in self.children:
@@ -208,6 +208,14 @@ class Tree:
 
     def get_action(self):
         return max(self.root.children, key=lambda x: x.n_visits).action
+
+    def get_actions_and_probs(self):
+        assert len(self.root.children) > 0
+        visits = [ np.log(child.n_visits + 1e-10) for child in self.root.children ]
+        return [ child.action for child in self.root.children ], softmax(visits)
+
+    def chroot(self, i):
+        self.root = self.root.children[i]
 
 if __name__ == '__main__':
     import sys

@@ -193,6 +193,17 @@ class Decoder(tf.keras.Model):
 
         return tf.nn.log_softmax(tf.concat(all_logis, axis=0))
 
+class Model(tf.keras.Model):
+    def __init__(self):
+        super(Model, self).__init__()
+
+        self.gnn = GNN()
+        self.decoder = Decoder()
+
+    def call(self, inputs, masks):
+        embeddings = self.gnn(inputs)
+        return self.decoder(*embeddings, *masks)
+
 def encode_features_no_runtime(state):
     record = state.record
     return record['op_feats'], record['device_feats'], record['tensor_feats'], record['link_feats'], record['place_feats']
@@ -250,6 +261,8 @@ def encode_features(state):
 
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
-def policy(state, placement_masks, communication_masks, gnn, decoder):
-
-    encode_features()
+def policy(model, state, actions):
+    feats = encode_features(state)
+    masks = zip(*(action.to_mask() for action in actions))
+    log_p = model(feats, masks)
+    return log_p

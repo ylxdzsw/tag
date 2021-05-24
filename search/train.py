@@ -5,7 +5,7 @@ import time
 import tensorflow as tf
 import collections
 
-from model import GNN, Decoder
+from model import Model, policy
 from environment import evaluate_with_feedback, score, invalidity
 from utils import save, load, info
 from baseline import gen_baselines, eval_baselines, random_cross_node, random_shuffle_node, Trace
@@ -17,41 +17,17 @@ from multiprocessing import Pool
 # tf.random.set_seed(seed)
 # np.random.seed(seed)
 
-def playout(record, gnn, decoder):
-
-    def policy_fun(state, ):
-        pass
-
+def playout(record, model):
     state = State.new(record)
-    mcts = Tree(None).playout(state, 50000)
+    mcts = Tree(lambda state, actions: policy(model, state, actions)).playout(state, 5000)
 
-    data = [] # (actions, action_probs)
+    data = [] # (state, actions, probs)
 
-    while True:
-        status = game.get_status()
-        if status != 0:
-            if status == 1:
-                return [ (*x, 1 if i%2 == 0 else -1) for i, x in enumerate(data) ]
-            if status == 2:
-                return [ (*x, -1 if i%2 == 0 else 1) for i, x in enumerate(data) ]
-            if status == 3:
-                return [ (*x, 0) for x in data ]
-            return record, status
-
-        mcts.playout(game, 800 - mcts.total_visits())
-
-        action_probs = mcts.get_action_probs(0.1)
-        pieces, mask, probs = encode_input(game, action_probs)
-
-        data.append((pieces, mask, probs))
-
-        # state = game.dump()
-        # value = mcts.root_value()
-        # print(state, action_probs, value)
-
-        old_pos, new_pos = mcts.sample_action(0.2, 0.1)
-        game.do_move(old_pos, new_pos)
-        mcts.chroot(old_pos, new_pos)
+    for i in range(len(record['op_groups']) // 2):
+        mcts.playout(game, 800 - mcts.root.n_visits)
+        actions, probs = mcts.get_actions_and_probs()
+        data.append((state.clone(), actions, probs))
+        mcts.chroot(np.random.choice(range(len(probs)), probs))
 
     return data
 

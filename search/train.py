@@ -16,7 +16,7 @@ from multiprocessing import Pool
 # tf.random.set_seed(seed)
 # np.random.seed(seed)
 
-def playout(record, model=None):
+def playout(record, model=None, limit=8000):
     if model is not None:
         mcts = Tree(record, lambda state, actions: policy(model, state, actions))
     else:
@@ -25,7 +25,7 @@ def playout(record, model=None):
     data = [] # (state, actions, probs)
     for i in range(len(record['op_groups']) // 4):
         n_play = (len(record['op_groups']) - i) * (2 ** record['topo_spec'].ntasks) * 4
-        n_play = max(min(n_play, 800), 50)
+        n_play = min(n_play, limit)
         mcts.playout(n_play - mcts.root.n_visits)
         actions, probs = mcts.get_actions_and_probs()
         data.append((mcts.root.state, actions, probs)) # no need to clone: it is about to be freed
@@ -40,7 +40,7 @@ def worker_init(model_path):
 
 def worker_run(record):
     global model
-    return playout(record, model)
+    return playout(record, model, 800)
 
 def collect_data(records, model):
     # Tensorflow sucks
@@ -90,7 +90,7 @@ if __name__ == '__main__':
             model.load_weights(f"weights_{r}")
             info(f"continue from {r} round")
         else:
-            init_data = collect_data(records, None)
+            init_data = load('init_data')
             train(model, optimizer, init_data)
             r = 0
 

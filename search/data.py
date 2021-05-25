@@ -301,10 +301,13 @@ def gen_random_topology(model_size):
     }
     intra_links = (8000, 50000) # PCI, nvlink
     inter_links = (2810, 5000) # diff rack, same rack
-    card_numbers = (2, 4)
+    card_numbers = (2, 3, 4, 6, 8)
 
     tasks = []
-    for _ in range(6): # at most 6 tasks
+    for _ in range(4): # at most 4 tasks
+        if sum(task.number for task in tasks) >= 16:
+            break
+
         if len(tasks) >= 2 and total_memory > 2 * model_size and np.random.rand() < .5:
             break
 

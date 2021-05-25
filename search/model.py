@@ -181,14 +181,14 @@ class Decoder(tf.keras.Model):
 
         self.per_device_linear = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
         self.hidden = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
-        self.final_linear = tf.keras.layers.Dense(hidden, activation=None)
+        self.final_linear = tf.keras.layers.Dense(1, activation=None)
 
-    def call(self, device_embeddings, op_embedding, placement_masks, communication_masks):
+    def call(self, op_embedding, device_embeddings, placement_masks, communication_masks):
         all_logis = []
         for i in range(len(communication_masks)):
-            x = self.per_device_linear(tf.concat([device_embeddings, placement_masks[i]], axis=1))
-            x = tf.concat([tf.reduce_mean(x, axis=0, keepdims=true), op_embedding, communication_masks[i]], axis=1)
-            x = tf.squeeze(self.final_linear(self.hidden(x)))
+            x = self.per_device_linear(tf.concat([device_embeddings, tf.expand_dims(placement_masks[i], -1)], axis=1))
+            x = tf.concat([tf.reduce_mean(x, axis=0), op_embedding, communication_masks[i]], axis=0)
+            x = tf.squeeze(self.final_linear(self.hidden(tf.expand_dims(x, 0))), axis=1) # TODO: batchify this
             all_logis.append(x)
 
         return tf.nn.log_softmax(tf.concat(all_logis, axis=0))
@@ -200,9 +200,12 @@ class Model(tf.keras.Model):
         self.gnn = GNN()
         self.decoder = Decoder()
 
-    def call(self, inputs, masks):
-        embeddings = self.gnn(inputs)
-        return self.decoder(*embeddings, *masks)
+    def set_graph(self, graph):
+        self.gnn.set_graph(graph)
+
+    def call(self, inputs, masks, i):
+        op_feats, device_feats = self.gnn(inputs)
+        return self.decoder(op_feats[i, :], device_feats, *masks)
 
 def encode_features_no_runtime(state):
     record = state.record
@@ -231,16 +234,22 @@ def encode_features(state):
 
     op_communication_strategy = [ state.get_action(gid).to_mask()[1] for gid in range(len(record['op_groups'])) ]
 
+    op_decisions = [ [
+        1 if gid < len(state.actions) else 0,
+        1 if gid == len(state.actions) else 0,
+    ] for gid in range(len(record['op_groups'])) ]
+
     op_feats = np.hstack((
         record["op_feats"],
         op_communication_strategy, # TODO: how to feed the sfb?
-        op_feedbacks
+        op_feedbacks,
+        op_decisions
     ))
 
     device_feats = np.hstack((
         record["device_feats"],
         [ [ max( feedback['device_peak_memory'][i] / record['topo_spec'].tasks[tid].memory for i in range(len(record['device_segments'])) if tid == record['device_segments'][i] ) ] for tid in range(record['topo_spec'].ntasks) ],
-        [ [ np.average( feedback['device_total_utilization'][i] for i in range(len(record['device_segments'])) if tid == record['device_segments'][i] ) ] for tid in range(record['topo_spec'].ntasks) ]
+        [ [ np.average( [feedback['device_total_utilization'][i] for i in range(len(record['device_segments'])) if tid == record['device_segments'][i]] ) ] for tid in range(record['topo_spec'].ntasks) ]
     ))
 
     tensor_feats = record["tensor_feats"]
@@ -261,7 +270,11 @@ def encode_features(state):
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
 def policy(model, state, actions):
+    state.evaluate() # ensure feedback
     feats = encode_features(state)
-    masks = zip(*(action.to_mask() for action in actions))
-    log_p = model(feats, masks)
+    masks = list(zip(*(action.to_mask() for action in actions)))
+
+    model.set_graph(state.record["graph"])
+    log_p = model(feats, masks, len(state.actions))
+
     return log_p

@@ -16,9 +16,9 @@ class Action:
     communication: Any # 0: PS, 1: NCCL, 2: MP
 
     def to_mask(self):
-        placement_mask = np.expand_dims(np.array(self.placement_mask), 1)
-        communication_mask = np.zeros((1, 3))
-        communication_mask[0, self.communication] = 1
+        placement_mask = np.array(self.placement, dtype=np.float32)
+        communication_mask = np.zeros(3)
+        communication_mask[self.communication] = 1
         return placement_mask, communication_mask
 
 @dataclass
@@ -35,12 +35,12 @@ class State:
         gdef, topo_spec, prof_data, batchsize = self.record['gdef'], self.record['topo_spec'], self.record['prof_data'], self.record['batchsize']
 
         state_copy = self.clone()
-        base_action = ([1 for _ in range(len(topo_spec.tasks))], 1)
+        base_action = Action([1 for _ in range(len(topo_spec.tasks))], 1)
         state_copy.actions = [base_action]
         time, feedback = evaluate_with_feedback(state_copy)
 
         if invalidity(state_copy.record, feedback) > 0: # if OOM, use MP as baseline
-            base_action = ([1 for _ in range(len(topo_spec.tasks))], 2)
+            base_action = Action([1 for _ in range(len(topo_spec.tasks))], 2)
             state_copy.actions = [base_action]
             time, feedback = evaluate_with_feedback(state_copy)
 
@@ -77,20 +77,20 @@ class State:
         for gid, group in enumerate(self.record['op_groups']):
             action = self.get_action(gid)
 
-            placed_devices_mask = [ action[0][tid] for (_, tid) in devices ]
+            placed_devices_mask = [ action.placement[tid] for (_, tid) in devices ]
             placed_devices = np.nonzero(placed_devices_mask)[0]
 
-            if action[1] == 0: # PS
+            if action.communication == 0: # PS
                 for node_id in group:
                     s = [ -1-placed_devices[node_id % len(placed_devices)] ]
                     s.extend(placed_devices_mask)
                     strategy[gdef.node[node_id].name] = s
-            elif action[1] == 1: # NCCL
+            elif action.communication == 1: # NCCL
                 s = [ 1 ]
                 s.extend(placed_devices_mask)
                 for node_id in group:
                     strategy[gdef.node[node_id].name] = s
-            elif action[1] == 2: # MP
+            elif action.communication == 2: # MP
                 costs = [ int(self.record['parameter_sizes'][i] / 100000) for i in group ]
                 # single card placement does not have base_group restriction.
                 assignments = metis(gdef, [[i] for i in range(len(gdef.node))], costs, len(placed_devices), group, batchsize, balance_factor=1.5)
@@ -116,14 +116,17 @@ class State:
         return State(self.record, self.baseline, new_actions, result)
 
 class Node:
-    def __init__(self, state, action):
-        self.action = action
-        self.state = state # the state after taking the action
+    def __init__(self, state):
+        self.state = state # the state after taking one more action than its parent
         self.p = 0 # prior probability of choosing this among all siblings
         self.q = 0 # the average speedup when taking this action on this state
         self.c = 0 # per-node parameter to control exploration vs exploitation
         self.n_visits = 0
         self.children = []
+
+    @property
+    def action(self):
+        return self.state.actions[-1] if len(self.state.actions) > 0 else None
 
     def playout_and_update_recursive(self, options):
         if self.is_leaf():
@@ -154,6 +157,7 @@ class Node:
     def expand(self, options):
         record = self.state.record
 
+        # performance: the possible actions is fixed for a record. Should we cache them along with the baseline?
         for placement in itertools.product([0, 1], repeat=len(record['topo_spec'].tasks)):
             if sum(placement) == 0:
                 continue
@@ -167,18 +171,18 @@ class Node:
                 if options.real_topo and record['batchsize'] % ndevices != 0 and communication != 2:
                     continue
 
-                action = placement, communication
-                new_state = self.state.clone(self.action)
-                self.children.append(Node(new_state, action))
+                action = Action(placement, communication)
+                new_state = self.state.clone(action)
+                self.children.append(Node(new_state))
 
         for child in self.children:
             child.c = np.sqrt(len(self.children) / 10)
 
         if options.policy_fun is not None:
-            log_ps = policy_fun(self.state, (child.action for child in self.children))
+            log_ps = options.policy_fun(self.state, (child.action for child in self.children))
 
             for child, log_p in zip(self.children, log_ps):
-                info(child.action, np.exp(log_p))
+                # info(child.action, np.exp(log_p))
                 child.p = np.exp(log_p)
         else:
             for child in self.children:
@@ -190,7 +194,7 @@ class Tree:
     def __init__(self, record, policy_fun, real_topo=False): # real_topo controls whether we should filter out the un-dividable replications
         self.policy_fun = policy_fun
         self.real_topo = real_topo
-        self.root = Node(State.new(record), None)
+        self.root = Node(State.new(record))
 
     def playout(self, ntimes, trace_fun=None):
         best = None
@@ -209,8 +213,6 @@ class Tree:
 
     def chroot(self, i):
         self.root = self.root.children[i]
-        if self.root.state.result is None:
-            self.root.state.evaluate()
 
 if __name__ == '__main__':
     import sys

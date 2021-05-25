@@ -4,7 +4,6 @@ import numpy as np
 import time
 import tensorflow as tf
 import collections
-import sys
 
 from model import Model, policy
 from environment import evaluate_with_feedback, invalidity
@@ -19,14 +18,15 @@ from multiprocessing import Pool
 
 def playout(record, model=None):
     if model is not None:
-        model.set_graph(record["graph"]) # the graph won't change during playout
         mcts = Tree(record, lambda state, actions: policy(model, state, actions))
     else:
         mcts = Tree(record, None)
 
     data = [] # (state, actions, probs)
-    for i in range(len(record['op_groups']) // 2):
-        mcts.playout(8 - mcts.root.n_visits)
+    for i in range(len(record['op_groups']) // 4):
+        n_play = (len(record['op_groups']) - i) * (2 ** record['topo_spec'].ntasks) * 4
+        n_play = max(min(n_play, 800), 50)
+        mcts.playout(n_play - mcts.root.n_visits)
         actions, probs = mcts.get_actions_and_probs()
         data.append((mcts.root.state, actions, probs)) # no need to clone: it is about to be freed
         mcts.chroot(np.random.choice(range(len(probs)), p=probs))
@@ -34,8 +34,6 @@ def playout(record, model=None):
     return data
 
 def worker_init(model_path):
-    tf.config.experimental.set_visible_devices([], 'GPU')
-
     global model
     model = Model()
     model.load_weights(model_path)
@@ -45,9 +43,12 @@ def worker_run(record):
     return playout(record, model)
 
 def collect_data(records, model):
-    model.save('_weights')
-    with Pool(40, initializer=worker_init, initargs=('_weights',)) as pool:
-        data_batches = pool.map(worker_run, (records[i % len(records)] for i in range(100)), chunksize=1)
+    # Tensorflow sucks
+    # model.save_weights('_weights')
+    # with Pool(40, initializer=worker_init, initargs=('_weights',)) as pool:
+    #     data_batches = pool.map(worker_run, (records[i % len(records)] for i in range(100)), chunksize=1)
+
+    data_batches = [ playout(records[record_id], model) for record_id in np.random.randint(len(records), size=4) ]
     return [ x for batch in data_batches for x in batch ]
 
 L2_regularization_factor = 0
@@ -71,32 +72,39 @@ def train(model, optimizer, data):
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
         acc += loss.numpy()
-        if epoch % 100 == 99:
+        if epoch % 10 == 9:
             print(acc)
             acc = 0
 
-records = load("records")
+if __name__ == '__main__':
+    import sys
+    records = load("records")
 
-with tf.device("/gpu:0"):
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
+    with tf.device("/gpu:0"):
+        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=.6) # https://openreview.net/pdf?id=r1etN1rtPB
 
-    model = Model()
+        model = Model()
 
-    if len(sys.argv) > 1:
-        r = int(sys.argv[1])
-        model.load_weights(f"weights_{r}")
-        info(f"continue from {r} round")
-    else:
-        init_data = playout(records[0])
-        train(model, optimizer, init_data)
-        r = 0
+        if len(sys.argv) > 1:
+            r = int(sys.argv[1])
+            model.load_weights(f"weights_{r}")
+            info(f"continue from {r} round")
+        else:
+            init_data = collect_data(records, None)
+            train(model, optimizer, init_data)
+            r = 0
 
-    while True:
-        data = collect_data(records, model)
-        train(model, optimizer, data)
+        while True:
+            try:
+                data = load(f"data_{r}")
+            except:
+                data = collect_data(records, model)
+                save(data, f"data_{r}")
 
-        r += 1
+            train(model, optimizer, data)
 
-        info("==== save ====")
-        model.save_weights(f"weights_{r}")
-        save(records, "records")
+            info("==== save ====")
+            model.save_weights(f"weights_{r}")
+            save(records, "records")
+
+            r += 1

@@ -299,7 +299,7 @@ def gen_random_topology(model_size):
         '1080ti': 9<<30,
         'v100': 14<<30
     }
-    intra_links = (8000, 50000) # PCI, nvlink
+    intra_links = (8000, 20000) # PCI, nvlink
     inter_links = (2810, 5000) # diff rack, same rack
     card_numbers = (2, 3, 4, 6, 8)
 

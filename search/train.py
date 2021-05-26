@@ -55,7 +55,7 @@ L2_regularization_factor = 0
 
 def train(model, optimizer, data):
     acc = 0
-    for epoch in range(len(data) * 4):
+    for epoch in range(len(data) * 100):
         state, actions, probs = data[np.random.randint(len(data))]
 
         with tf.GradientTape() as tape:
@@ -72,8 +72,8 @@ def train(model, optimizer, data):
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
 
         acc += loss.numpy()
-        if epoch % 10 == 9:
-            print(acc)
+        if epoch % 50 == 49:
+            info(acc)
             acc = 0
 
 if __name__ == '__main__':

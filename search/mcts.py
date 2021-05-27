@@ -91,6 +91,7 @@ class State:
                 for node_id in group:
                     strategy[gdef.node[node_id].name] = s
             elif action.communication == 2: # MP
+                assert len(placed_devices) >= 2 # METIS cannot handle only one partition. the node expanding logic will prevent this case
                 costs = [ int(self.record['parameter_sizes'][i] / 100000) for i in group ]
                 # single card placement does not have base_group restriction.
                 assignments = metis(gdef, [[i] for i in range(len(gdef.node))], costs, len(placed_devices), group, batchsize, balance_factor=1.5)
@@ -162,7 +163,7 @@ class Node:
             if sum(placement) == 0:
                 continue
 
-            ndevices = sum( record['topo_spec'].tasks[i].number for i in placement if i == 1 )
+            ndevices = sum( record['topo_spec'].tasks[i].number for i, p in enumerate(placement) if p == 1 )
 
             for communication in range(3):
                 if ndevices == 1 and communication != 0:

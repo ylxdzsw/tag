@@ -131,17 +131,17 @@ class GNN(tf.keras.Model):
         node_hidden = 256
         edge_hidden = 64
 
-        self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.op_trans = tf.keras.layers.Dense(node_hidden, activation=tf.math.tanh)
         self.op_normalizer = tf.keras.layers.BatchNormalization()
-        self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.nn.sigmoid)
+        self.device_trans = tf.keras.layers.Dense(node_hidden, activation=tf.math.tanh)
         self.device_normalizer = tf.keras.layers.BatchNormalization()
-        self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.nn.sigmoid) for etype in all_etypes }
+        self.edge_trans = { etype: tf.keras.layers.Dense(edge_hidden, activation=tf.math.tanh) for etype in all_etypes }
         self.edge_normalizers = { etype: tf.keras.layers.BatchNormalization() for etype in all_etypes }
 
         self.gconv_layers = [
-            GATConv(node_hidden, activation=tf.nn.sigmoid),
-            GATConv(node_hidden, activation=tf.nn.sigmoid),
-            GATConv(node_hidden, activation=tf.nn.sigmoid),
+            GATConv(node_hidden, activation=tf.math.tanh),
+            GATConv(node_hidden, activation=tf.math.tanh),
+            GATConv(node_hidden, activation=tf.math.tanh),
             GATConv(node_hidden, activation=None)
         ]
 
@@ -179,19 +179,21 @@ class Decoder(tf.keras.Model):
 
         hidden = 256
 
-        self.per_device_linear = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
-        self.hidden = tf.keras.layers.Dense(hidden, activation=tf.nn.sigmoid)
+        self.per_device_hidden = tf.keras.layers.Dense(hidden, activation=tf.math.tanh)
+        self.per_device_hidden2 = tf.keras.layers.Dense(hidden, activation=tf.math.tanh)
+        self.hidden = tf.keras.layers.Dense(hidden, activation=tf.math.tanh)
         self.final_linear = tf.keras.layers.Dense(1, activation=None)
 
     def call(self, op_embedding, device_embeddings, placement_masks, communication_masks):
-        all_logis = []
+        all_embeddings = []
         for i in range(len(communication_masks)):
-            x = self.per_device_linear(tf.concat([device_embeddings, tf.expand_dims(placement_masks[i], -1)], axis=1))
+            x = tf.concat([device_embeddings, tf.expand_dims(placement_masks[i], -1)], axis=1)
+            x = self.per_device_hidden2(self.per_device_hidden(x))
             x = tf.concat([tf.reduce_mean(x, axis=0), op_embedding, communication_masks[i]], axis=0)
-            x = tf.squeeze(self.final_linear(self.hidden(tf.expand_dims(x, 0))), axis=1) # TODO: batchify this
-            all_logis.append(x)
+            all_embeddings.append(tf.expand_dims(x, 0))
+        x = tf.squeeze(self.final_linear(self.hidden(tf.concat(all_embeddings, axis=0))), axis=1)
 
-        return tf.nn.log_softmax(tf.concat(all_logis, axis=0))
+        return tf.nn.log_softmax(x)
 
 class Model(tf.keras.Model):
     def __init__(self):
@@ -209,7 +211,18 @@ class Model(tf.keras.Model):
 
 def encode_features_no_runtime(state):
     record = state.record
-    return record['op_feats'], record['device_feats'], record['tensor_feats'], record['link_feats'], record['place_feats']
+
+    op_decisions = [ [
+        1 if gid < len(state.actions) else 0,
+        1 if gid == len(state.actions) else 0,
+    ] for gid in range(len(record['op_groups'])) ]
+
+    op_feats = np.hstack((
+        record["op_feats"],
+        op_decisions
+    ))
+
+    return op_feats, record['device_feats'], record['tensor_feats'], record['link_feats'], record['place_feats']
 
 def encode_features(state):
     record, feedback = state.record, state.result[1]
@@ -269,9 +282,12 @@ def encode_features(state):
 
     return op_feats, device_feats, tensor_feats, link_feats, place_feats
 
-def policy(model, state, actions):
-    state.evaluate() # ensure feedback
-    feats = encode_features(state)
+def policy(model, state, actions, use_runtime_feedback=True):
+    if use_runtime_feedback:
+        state.evaluate() # ensure feedback
+        feats = encode_features(state)
+    else:
+        feats = encode_features_no_runtime(state)
     masks = list(zip(*(action.to_mask() for action in actions)))
 
     model.set_graph(state.record["graph"])

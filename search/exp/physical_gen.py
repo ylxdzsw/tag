@@ -41,6 +41,6 @@ if __name__ == '__main__':
 
     base_state = copy.copy(trace[0])
     base_state.actions = [base_state.baseline[1]]
-    strategy = state.dump_strategy()
+    strategy = base_state.dump_strategy()
     save((gdef, prof_data.to_tge(topo, batchsize), batchsize, strategy), "{}_baseline".format(m))
 

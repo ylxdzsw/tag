@@ -24,7 +24,7 @@ def playout(record, model=None, limit=8000):
 
     data = [] # (state, actions, probs)
     for i in range(len(record['op_groups']) // 4):
-        n_play = (len(record['op_groups']) - i) * (2 ** record['topo_spec'].ntasks) * 4
+        n_play = (len(record['op_groups']) - i) * (2 ** record['topo_spec'].ntasks) * 8
         n_play = min(n_play, limit)
         mcts.playout(n_play - mcts.root.n_visits)
         actions, probs = mcts.get_actions_and_probs()
@@ -55,14 +55,14 @@ L2_regularization_factor = 0
 
 def train(model, optimizer, data):
     acc = 0
-    for epoch in range(len(data) * 100):
+    for epoch in range(len(data) * 4):
         state, actions, probs = data[np.random.randint(len(data))]
 
         with tf.GradientTape() as tape:
             tape.watch(model.trainable_weights)
 
             log_p = policy(model, state, actions)
-            loss = -tf.math.reduce_mean(probs * log_p)
+            loss = -tf.math.reduce_sum(probs * log_p)
 
             if L2_regularization_factor > 0:
                 for weight in model.trainable_weights:

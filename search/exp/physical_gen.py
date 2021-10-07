@@ -8,6 +8,7 @@ from utils import info, load, save
 from metis import metis
 from environment import evaluate_with_feedback, invalidity
 from mcts import Tree
+from model import Model, policy
 
 if __name__ == '__main__':
     import sys
@@ -27,13 +28,17 @@ if __name__ == '__main__':
 
     record = gen_data(gdef, prof_data, batchsize, topo)
 
+    model = Model()
+    model.load_weights("loss_curve_our_tanh_sum/loss_curve_weights_112899_105.98390835523605")
+
     trace = []
     def trace_fun(leaf_state):
         trace.append(leaf_state)
         info(leaf_state.result[0], leaf_state.actions)
-    Tree(record, None, real_topo=True).playout(2000, trace_fun)
+    # Tree(record, None, real_topo=True).playout(2000, trace_fun)
+    Tree(record, lambda state, actions: policy(model, state, actions), real_topo=True).playout(2000, trace_fun)
 
-    for ntimes in (50, 800):#, 2000):
+    for ntimes in (50, 800, 2000):
         best_state = max(trace[:ntimes], key=lambda x: x.result[0])
         info("best: ", ntimes, best_state.result[0], best_state.actions)
         strategy = best_state.dump_strategy()

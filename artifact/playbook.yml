@@ -1,0 +1,48 @@
+---
+- name: Install
+  hosts: all
+  remote_user: root
+
+  tasks:
+  - name: Copy source code
+    ansible.builtin.copy:
+      src: /root/tge
+      dest: /root
+    tags: code
+
+  - name: Apt key for conda
+    ansible.builtin.apt_key:
+      url: https://repo.anaconda.com/pkgs/misc/gpgkeys/anaconda.asc
+      state: present
+    tags: conda
+
+  - name: Repo for conda
+    ansible.builtin.apt_repository:
+      repo: deb https://repo.anaconda.com/pkgs/misc/debrepo/conda stable main
+      state: present
+    tags: conda
+
+  - name: Install miniconda
+    ansible.builtin.apt:
+      name: conda
+    tags: conda
+
+  - name: check if conda environment exists
+    ansible.builtin.stat:
+      path: /opt/conda/envs/exp
+    register: conda_env
+    tags: conda
+
+  - name: Install conda environment
+    shell: . /opt/conda/etc/profile.d/conda.sh && conda env create -f /root/tge/artifact/environment_exp.yml 
+    when: not conda_env.stat.exists
+    tags: conda
+
+  - name: Conda profile
+    blockinfile:
+      path: /root/.profile
+      block: |
+        . /opt/conda/etc/profile.d/conda.sh
+        conda activate exp
+      marker: "# {mark} ANSIBLE MANAGED BLOCK"
+    tags: conda

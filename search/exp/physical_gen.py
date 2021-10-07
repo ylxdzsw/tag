@@ -33,7 +33,7 @@ if __name__ == '__main__':
         info(leaf_state.result[0], leaf_state.actions)
     Tree(record, None, real_topo=True).playout(2000, trace_fun)
 
-    for ntimes in (50, 800, 2000):
+    for ntimes in (50, 800):#, 2000):
         best_state = max(trace[:ntimes], key=lambda x: x.result[0])
         info("best: ", ntimes, best_state.result[0], best_state.actions)
         strategy = best_state.dump_strategy()

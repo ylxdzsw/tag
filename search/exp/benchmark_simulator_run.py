@@ -7,7 +7,7 @@ import tge
 import numpy as np
 import itertools
 import copy
-from utils import info, load
+from utils import info, load, save
 
 # g1: 10.28.1.16, p100 x 2
 # g2: 10.28.1.17, p100 x 2
@@ -27,7 +27,7 @@ def measure_time(name):
     print("{}: {:.3g}s".format(name, toc - tic))
 
 import os
-os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.24:3806"] }, "task": {"type": "worker", "index": 0} }'
+os.environ["TF_CONFIG"] = '{ "cluster": { "worker": ["10.28.1.24:3806", "10.28.1.16:3901"] }, "task": {"type": "worker", "index": 0} }'
 
 def setup_workers(workers, protocol="grpc"):
     import urllib.request
@@ -40,12 +40,13 @@ def setup_workers(workers, protocol="grpc"):
         assert urllib.request.urlopen(url).read() == b'ok'
     time.sleep(1)
 
-setup_workers(["10.28.1.24:3806"])
+setup_workers(["10.28.1.24:3806", "10.28.1.16:3901"])
 
 devices = (
     "/job:worker/replica:0/task:0/device:GPU:0",
     "/job:worker/replica:0/task:0/device:GPU:1",
-
+    "/job:worker/replica:0/task:1/device:GPU:0",
+    "/job:worker/replica:0/task:1/device:GPU:1",
 )
 
 resolver = TFConfigClusterResolver()
@@ -58,28 +59,34 @@ config.allow_soft_placement = True  # log_device_placement=True)
 config.gpu_options.allow_growth = True
 server = tf.distribute.Server(cluster, job_name='worker', task_index=0, protocol="grpc", config=config)
 
+from profiler import NcclProfiler
+nccl_model = NcclProfiler(devices, server.target).profile()
+save(nccl_model, "g9-g1-nccl")
+print(nccl_model)
+raise SystemExit
+
 import sys
 data_path = sys.argv[1]
 
 gdef, prof_data, batchsize, strategy = load(data_path)
 
-with measure_time("edit graph"):
-    g = (tge.TGE(gdef, devices)
-        .set_strategy(strategy)
-        .replace_placeholder(batchsize)
-        # .verbose()
-        .compile()
-        .get_result()
-    )
+strategy = { node.name: [1, 0, 0, 1, 1] for node in gdef.node }
 
-with measure_time("prepare"):
-    tf.import_graph_def(g)
-    graph = tf.get_default_graph()
+g = (tge.TGE(gdef, devices)
+    .set_strategy(strategy)
+    .replace_placeholder(batchsize)
+    # .verbose()
+    .compile()
+    .get_result()
+)
 
-    opt = graph.get_operation_by_name("import/Adam/replica_0")
-    init = graph.get_operation_by_name("import/init/replica_0")
+tf.import_graph_def(g)
+graph = tf.get_default_graph()
 
-    sess = tf.Session(server.target, config=config)
+opt = graph.get_operation_by_name("import/Adam/replica_0")
+init = graph.get_operation_by_name("import/init/replica_0")
+
+sess = tf.Session(server.target, config=config)
 
 with measure_time("init"):
     sess.run(init)
@@ -94,3 +101,17 @@ for _ in range(50):
 toc = time.perf_counter()
 
 print("average time: {}".format((toc - tic) / 50))
+
+gdef, prof_data, batchsize, _ = load(data_path)
+nccl_model = load("g9-g1-nccl")
+
+tge = tge.TGE(gdef, devices, sinks=["Adam"])
+tge.set_strategy(strategy)
+tge.fill_batchsize(batchsize)
+tge.replace_placeholder(batchsize)
+tge.set_bandwidth(inter=2810, intra=3000)
+tge.set_nccl_model(nccl_model)
+
+time, mem = tge.evaluate(prof_data)
+
+print("simulated time: {}".format(time / 1000000))

@@ -26,6 +26,18 @@ pub fn edit(graph: &mut Graph, target: &mut Target, strategy: &BTreeMap<&str, (V
         }
     }
 
+    // hack: Tensorflow requires is_ref arguments to be on the same device. This includes variables and optimizer states
+    for node in graph.nodes.iter() {
+        let ref_args = match &node.raw_node.op[..] {
+            "ApplyGradientDescent" | "ScatterSub" => &[0][..],
+            "ApplyAdam" => &[0, 1, 2][..],
+            _ => &[]
+        };
+        for &i in ref_args {
+            node.graph().nodes[node.inputs[i].0].form.devices = node.form.devices.clone()
+        }
+    }
+
     // only split if the whole group is replicated the same times and no member is using strategy 4 (broadcasting sufficient factor). Otherwise go cache (default).
     let mut visited_groups = BTreeSet::new();
     for node in graph.nodes.iter_mut() {

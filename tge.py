@@ -53,8 +53,8 @@ libtge.heft_control.restype = None
 libtge.evaluate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_uint32, ctypes.POINTER(ctypes.c_char), ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint64)]
 libtge.evaluate.restype = ctypes.c_uint64
 
-libtge.remove_collocation_hint.argtypes = [ctypes.c_void_p]
-libtge.remove_collocation_hint.restype = None
+libtge.remove_colocation_hint.argtypes = [ctypes.c_void_p]
+libtge.remove_colocation_hint.restype = None
 
 libtge.remove_shape_hint.argtypes = [ctypes.c_void_p]
 libtge.remove_shape_hint.restype = None
@@ -135,7 +135,7 @@ class TGE:
         self.compiled = True
 
         # for backward compatibility
-        self.remove_collocation_hint()
+        self.remove_colocation_hint()
         self.remove_shape_hint()
 
     @chain
@@ -208,9 +208,9 @@ class TGE:
         self.profiler = libtge.create_profiler(profile_raw, len(profile_raw))
 
     @chain
-    def remove_collocation_hint(self):
+    def remove_colocation_hint(self):
         assert self.compiled
-        libtge.remove_collocation_hint(self.target)
+        libtge.remove_colocation_hint(self.target)
 
     @chain
     def remove_shape_hint(self):

@@ -187,8 +187,8 @@ unsafe extern fn evaluate(
 }
 
 #[no_mangle]
-unsafe extern fn remove_collocation_hint(target: *mut Target) {
-    polishing::remove_collocation_hint(&mut *target)
+unsafe extern fn remove_colocation_hint(target: *mut Target) {
+    polishing::remove_colocation_hint(&mut *target)
 }
 
 #[no_mangle]

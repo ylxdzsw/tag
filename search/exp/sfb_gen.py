@@ -17,9 +17,14 @@ prof_data = ProfileData(m)
 batchsize = 6
 tge.simplify_graph(gdef, sinks=["Adam", "init"])
 
+# topo = TopoSpec([
+#     TopoSpecTask('1080ti', 10<<30, 3000, 1),
+#     TopoSpecTask('p100', 9<<30, 3000, 2),
+# ], [[2810 for _ in range(2)] for _ in range(2)])
+
 topo = TopoSpec([
-    TopoSpecTask('1080ti', 10<<30, 3000, 1),
-    TopoSpecTask('p100', 9<<30, 3000, 2),
+    TopoSpecTask('v100', 30<<30, 8000, 1),
+    TopoSpecTask('v100', 30<<30, 8000, 1),
 ], [[2810 for _ in range(2)] for _ in range(2)])
 
 record = gen_data(gdef, prof_data, batchsize, topo)

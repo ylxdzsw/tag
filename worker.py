@@ -32,7 +32,7 @@ class Handler(BaseHTTPRequestHandler):
         except:
             return print("wrong path")
 
-        if int(timestamp) < int(time.time()):
+        if int(timestamp) + 1 < int(time.time()):
             return print("expired request")
 
         if cmd != 'restart':

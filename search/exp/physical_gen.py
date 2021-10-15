@@ -24,12 +24,13 @@ if __name__ == '__main__':
         TopoSpecTask('v100', 30<<30, 8000, 4),
         TopoSpecTask('1080ti', 9<<30, 3000, 8),
         TopoSpecTask('p100', 10<<30, 3000, 4),
+        # TopoSpecTask('t4', 14<<30, 3000, 16),
     ], [[2810 for _ in range(3)] for _ in range(3)])
 
     record = gen_data(gdef, prof_data, batchsize, topo)
 
     model = Model()
-    model.load_weights("loss_curve_our_tanh_sum/loss_curve_weights_112899_105.98390835523605")
+    model.load_weights(sys.argv[2])
 
     trace = []
     def trace_fun(leaf_state):

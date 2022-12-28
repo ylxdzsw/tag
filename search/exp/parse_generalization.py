@@ -3,7 +3,7 @@ import sys
 firsts = []
 bests = []
 
-for i_test in range(10):
+for i_test in range(100):
     with open("{}{}.mcts".format(sys.argv[1], i_test)) as f:
         first = None
         best = -1
